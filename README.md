@@ -1,4 +1,5 @@
 ## PyTorch Implementation of PointPillars
+*Solutions Architect: Gaowei Xu (gaowexu1991@gmail.com)*
 
 ### Reference:
 - https://github.com/tyagi-iiitv/PointPillars
@@ -7,36 +8,42 @@
 - https://github.com/SmallMunich/nutonomy_pointpillars
 - Lang, Alex H., et al. "Pointpillars: Fast encoders for object detection from point clouds." Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2019.
 
-### 1. Dataset
+
+### Environment Setup
+
+
+
+### Prepare Dataset
 
 
 
 
 
-### 2. Model Training
+### Model Training
 
 
 
 
 
-### 3. Model Inference
+### Model Inference
 
 
 
 
 
-### 4. TensorRT Acceleration
+### TensorRT Acceleration
 
 
 
 
-### 5. Performance Summary 
+### Performance Summary 
 
 
 
 
-### 6. 3D Detection Visualization
+### Detection Visualization
 
 
-
+### License
+See the [LICENSE](./LICENSE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
 
