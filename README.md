@@ -33,7 +33,7 @@ wget -c https://s3.eu-central-1.amazonaws.com/avg-kitti/data_object_label_2.zip
 ```
 
 Alternatively, we already downloaded all these datasets and constructed a compressed package,
-one can download it with link AAA. After de-compressing it, the directories is:
+one can download it with link `s3://autonomous-driving-perception/KITTI_3D_OBJECT_DETECTION_DATASET.zip` (`md5: 3033523e4bbf0696443b1d10ab972fe9`). After de-compressing it, the directories are:
 ```angular2html
 KITTI_DATASET/
 ├── testing      <-- 7580 test data
@@ -47,7 +47,7 @@ KITTI_DATASET/
     └── velodyne
 ```
 
-A minimum sampled dataset could be downloaded from 
+A minimum sampled dataset could be downloaded from `s3://autonomous-driving-perception/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET.zip`
 
 ### Model Training
 
