@@ -18,6 +18,9 @@
 KITTI 3D object detection benchmark consists of 7481 training images and 7518 test images as well as 
 the corresponding point clouds, comprising a total of 80,256 labeled objects. 
 
+For the detail about the coordinate system definition, please refer to [Vision meets robotics: The KITTI
+dataset](./references/Vision%20meets%20robotics-%20The%20KITTI%20dataset.pdf)
+
 One can download the dataset following the [KITTI official website](http://www.cvlibs.net/datasets/kitti/eval_object.php?obj_benchmark=3d), which contains four parts for 3D object detection task:
 - Download left color images of object data set (12 GB)
 - Download Velodyne point clouds, if you want to use laser information (29 GB)
