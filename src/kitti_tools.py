@@ -29,15 +29,15 @@ class KITTITools(object):
         self._cloud_points_full_path = cloud_points_full_path
 
         self._categories_color = {
-            'Car': [1, 0, 0],               # red
+            'Car': [255, 0, 0],             # red
             'DontCare': [0, 0, 0],          # black
-            'Pedestrian': [0, 0, 1],        # blue
-            'Van': [1, 1, 0],               # yellow
-            'Cyclist': [1, 0, 1],           # magenta
-            'Truck': [0, 1, 1],             # cyan
-            'Misc': [0.5, 0, 0],            # maroon
-            'Tram': [0, 0.5, 0],            # green
-            'Person_sitting': [0, 0, 0.5]   # navy
+            'Pedestrian': [0, 0, 255],      # blue
+            'Van': [255, 255, 0],           # yellow
+            'Cyclist': [255, 0, 255],       # magenta
+            'Truck': [0, 255, 255],         # cyan
+            'Misc': [127, 0, 0],            # maroon
+            'Tram': [0, 127, 0],            # green
+            'Person_sitting': [0, 0, 127]   # navy
         }
 
         self._p2, self._r0_rect, self._tr_velodyne_to_camera = self.load_calibration_matrix()
@@ -147,7 +147,7 @@ class KITTITools(object):
 
         return ground_truth
 
-    def project_velodyne_points_in_image(self, pts3d):
+    def project_velodyne_points_to_image_plane(self, pts3d):
         """
         project cloud points into image plane
 
@@ -166,7 +166,7 @@ class KITTITools(object):
         cloud_points = cloud_points.transpose()
         reflectances = pts3d[indices, 3]
 
-        # [u v z]^T = p2 * r0_rect * tr_velo_to_cam * [x y z 1]^T
+        # [u v z]^T = p2 * r0_rect * tr_velodyne_to_cam * [x y z 1]^T
         pts3d_cam = np.matmul(self._r0_rect, np.matmul(self._tr_velodyne_to_camera, cloud_points))
         pts3d_cam = np.array(pts3d_cam)
 
@@ -245,10 +245,12 @@ class KITTITools(object):
         :return:
         """
         height, width, channels = image_data.shape
-        pts2d_cam_normed, pts3d_cam_in_front_of_camera, reflectances = self.project_velodyne_points_in_image(pc_data)
+        pts2d_cam_normed, pts3d_cam_in_front_of_camera, reflectances = self.project_velodyne_points_to_image_plane(
+            pts3d=pc_data
+        )
 
-        plt.figure(figsize=(12, 4), dpi=96, tight_layout=True)
-        plt.imshow(image_data)
+        fig, ax = plt.subplots(figsize=(12, 4))
+        ax.imshow(image_data)
 
         # plot cloud points
         u, v, z = pts2d_cam_normed
@@ -267,12 +269,13 @@ class KITTITools(object):
         plt.tight_layout()
         plt.show()
 
-    def plot_2d_box_in_image_plane(self, image_data, gts_in_camera_coordinate_system):
+    def plot_2d_box_in_image_plane(self, image_data, gts_in_camera_coordinate_system, thickness=2):
         """
         plot 2D object in image (frame) which is captured with left color camera
 
         :param image_data: RGB data of camera frame
         :param gts_in_camera_coordinate_system: ground truth in camera coordinate system
+        :param thickness: thickness of 3D box plotted in image plane
         :return: None
         """
         fig, ax = plt.subplots(figsize=(12, 4))
@@ -284,8 +287,8 @@ class KITTITools(object):
                 (left_pixel, top_pixel),
                 right_pixel-left_pixel,
                 bottom_pixel-top_pixel,
-                linewidth=1.5,
-                edgecolor=self._categories_color[gt["type"]],
+                linewidth=thickness,
+                edgecolor=np.array(self._categories_color[gt["type"]]) / 255.0,
                 facecolor='none')
             ax.add_patch(rect)
 
@@ -293,33 +296,84 @@ class KITTITools(object):
         fig.tight_layout()
         plt.show()
 
-    def plot_3d_box_in_image_plane(self, image_data, gts_in_velodyne_coordinate_system):
+    def project_corners_from_velodyne_to_image_plane(self, box3d):
+        """
+        project 8 corners from velodyne coordinate system to image plane system
+
+        :param box3d: a numpy array with shape 8 x 3
+        :return: a numpy array with shape 8 x 3
+        """
+        box3d = np.insert(box3d, 3, np.ones(shape=(8, )), axis=1)
+        box3d = box3d.transpose()   # shape is 4 x 8
+
+        # [u v z]^T = p2 * r0_rect * tr_velo_to_cam * [x y z 1]^T
+        box3d_cam = np.matmul(self._r0_rect, np.matmul(self._tr_velodyne_to_camera, box3d))
+        box3d_cam = np.matmul(self._p2, box3d_cam)
+
+        box3d_cam_normed = box3d_cam
+        box3d_cam_normed[:2] = box3d_cam_normed[:2] / box3d_cam_normed[2, :]
+        box3d_cam_normed = box3d_cam_normed.transpose()
+
+        return box3d_cam_normed
+
+    def plot_3d_box_in_image_plane(self, image_data, gts_in_velodyne_coordinate_system, thickness=2):
         """
         plot 3D object in image (frame) which is captured with left color camera
 
         :param image_data: RGB data of camera frame
         :param gts_in_velodyne_coordinate_system: ground truth in velodyne coordinate system
+        :param thickness: thickness of 3D box plotted in image plane
         :return: None
         """
-        pass
 
-    @staticmethod
-    def plot_3d_box_in_velodyne_coordinate_system(pc_data):
-        """
-        plot the 3D box of objects in velodyne coordinate system
+        for index, gt in enumerate(gts_in_velodyne_coordinate_system):
+            type = gt["type"]
 
-        :param pc_data: cloud points data, with shape (N, 4)
-        :return: None
-        """
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(projection='3d')
-        ax.scatter(pc_data[:, 0], pc_data[:, 1], pc_data[:, 2], s=0.1)
-        ax.grid(False)
-        ax.set_xlabel('X axis')
-        ax.set_ylabel('Y axis')
-        ax.set_zlabel('Z axis')
+            # box3d is a (8,3) array of vertices for the 3d box in following order:
+            #     1 -------- 0
+            #    /|         /|
+            #   2 -------- 3 .
+            #   | |        | |
+            #   . 5 -------- 4
+            #   |/         |/
+            #   6 -------- 7
+
+            box3d = np.array(gt["box3d"])
+            box3d = np.transpose(box3d)
+
+            # project 3D box corners from velodyne coordinate system to image plane coordinate system
+            box3d_in_image_plane = self.project_corners_from_velodyne_to_image_plane(box3d)
+
+            color = self._categories_color[type]
+            qs = box3d_in_image_plane.astype(np.int32)
+
+            # Ref: https://github.com/kuixu/kitti_object_vis/blob/master/kitti_util.py
+            for k in range(0, 4):
+                i, j = k, (k + 1) % 4
+                cv2.line(image_data, (qs[i, 0], qs[i, 1]), (qs[j, 0], qs[j, 1]), color, thickness)
+                i, j = k + 4, (k + 1) % 4 + 4
+                cv2.line(image_data, (qs[i, 0], qs[i, 1]), (qs[j, 0], qs[j, 1]), color, thickness)
+                i, j = k, k + 4
+                cv2.line(image_data, (qs[i, 0], qs[i, 1]), (qs[j, 0], qs[j, 1]), color, thickness)
+
+        fig, ax = plt.subplots(figsize=(12, 4))
+        ax.imshow(image_data)
+        plt.axis("off")
         fig.tight_layout()
         plt.show()
+
+    def plot_3d_box_in_velodyne_coordinate_system(self, pc_data,
+                                                  gts_in_velodyne_coordinate_system, enable_bird_eye_view):
+        """
+        plot 3D bounding boxes in velodyne coordinate system (cloud points' coordinate system)
+
+        :param pc_data: a numpy array with shape M x 4
+        :param gts_in_velodyne_coordinate_system: ground truth of 3D bounding boxes in velodyne coordinate system
+        :param enable_bird_eye_view: whether to visualize the cloud points with label in bird eye's view
+        :return: None
+        """
+        print(pc_data.shape)
+
 
     def run(self):
         # read camera data, shape = (375, 1242, 3)
@@ -329,36 +383,36 @@ class KITTITools(object):
         # read cloud point data
         pc_data = np.fromfile(self._cloud_points_full_path, dtype='<f4').reshape(-1, 4)
 
-        # visualization
-        self.plot_velodyne_points_in_image_plane(
-            image_data=left_camera_image,
-            pc_data=pc_data)
-
-        self.plot_2d_box_in_image_plane(
-            image_data=left_camera_image,
-            gts_in_camera_coordinate_system=self._gts_in_camera_coordinate_system)
-
-        self.plot_3d_box_in_image_plane(
-            image_data=left_camera_image,
-            gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system)
-
+        # # visualization
+        # self.plot_velodyne_points_in_image_plane(
+        #     image_data=left_camera_image,
+        #     pc_data=pc_data)
+        #
+        # self.plot_2d_box_in_image_plane(
+        #     image_data=left_camera_image,
+        #     gts_in_camera_coordinate_system=self._gts_in_camera_coordinate_system)
+        #
+        # self.plot_3d_box_in_image_plane(
+        #     image_data=left_camera_image,
+        #     gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system)
+        #
         self.plot_3d_box_in_velodyne_coordinate_system(
             pc_data=pc_data,
             gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system,
             enable_bird_eye_view=False)
 
-        self.plot_3d_box_in_velodyne_coordinate_system(
-            pc_data=pc_data,
-            gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system,
-            enable_bird_eye_view=True)
+        # self.plot_3d_box_in_velodyne_coordinate_system(
+        #     pc_data=pc_data,
+        #     gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system,
+        #     enable_bird_eye_view=True)
 
 
 if __name__ == "__main__":
     tools = KITTITools(
-        image_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/image_2/000021.png",
-        calibration_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/calib/000021.txt",
-        label_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/label_2/000021.txt",
-        cloud_points_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/velodyne/000021.bin",
+        image_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/image_2/000052.png",
+        calibration_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/calib/000052.txt",
+        label_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/label_2/000052.txt",
+        cloud_points_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/velodyne/000052.bin",
     )
 
     tools.run()
