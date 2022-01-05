@@ -13,6 +13,9 @@
 ### Environment Setup
 
 
+```angular2html
+pip3 install open3d==0.14.1
+```
 
 ### Prepare KITTI Dataset
 KITTI 3D object detection benchmark consists of 7481 training images and 7518 test images as well as 
@@ -22,6 +25,7 @@ For the detail about the coordinate system definition, please refer to [Vision m
 dataset](./references/Vision%20meets%20robotics-%20The%20KITTI%20dataset.pdf)
 
 The sensors setup could be referred as the illustration figures below:
+
 ![recording_plaform](./setup.png)
 
 - Camera: x = right, y = down, z = forward
