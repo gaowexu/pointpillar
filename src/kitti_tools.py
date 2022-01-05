@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import copy
+import open3d as o3d   # pip3 install open3d==0.14.1
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
@@ -362,18 +363,37 @@ class KITTITools(object):
         fig.tight_layout()
         plt.show()
 
-    def plot_3d_box_in_velodyne_coordinate_system(self, pc_data,
-                                                  gts_in_velodyne_coordinate_system, enable_bird_eye_view):
+    def plot_3d_box_in_velodyne_coordinate_system(self, pc_data, gts_in_velodyne_coordinate_system):
         """
         plot 3D bounding boxes in velodyne coordinate system (cloud points' coordinate system)
 
         :param pc_data: a numpy array with shape M x 4
         :param gts_in_velodyne_coordinate_system: ground truth of 3D bounding boxes in velodyne coordinate system
-        :param enable_bird_eye_view: whether to visualize the cloud points with label in bird eye's view
         :return: None
         """
-        print(pc_data.shape)
+        point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(pc_data[:, 0:3])
+        geometries = [point_cloud]
 
+        for index, gt in enumerate(gts_in_velodyne_coordinate_system):
+            type = gt["type"]
+            if type == 'DontCare':
+                continue
+
+            points_box = np.array(gt["box3d"])
+            points_box = points_box.transpose()
+            lines_box = np.array([[0, 1], [1, 2], [0, 3], [2, 3],
+                                  [4, 5], [4, 7], [5, 6], [6, 7],
+                                  [0, 4], [1, 5], [2, 6], [3, 7]])
+            colors = np.array([self._categories_color[type] for _ in range(len(lines_box))])
+
+            line_set = o3d.geometry.LineSet()
+            line_set.points = o3d.utility.Vector3dVector(points_box)
+            line_set.lines = o3d.utility.Vector2iVector(lines_box)
+            line_set.colors = o3d.utility.Vector3dVector(colors)
+            geometries.append(line_set)
+
+        o3d.visualization.draw_geometries(geometries)
 
     def run(self):
         # read camera data, shape = (375, 1242, 3)
@@ -383,36 +403,30 @@ class KITTITools(object):
         # read cloud point data
         pc_data = np.fromfile(self._cloud_points_full_path, dtype='<f4').reshape(-1, 4)
 
-        # # visualization
-        # self.plot_velodyne_points_in_image_plane(
-        #     image_data=left_camera_image,
-        #     pc_data=pc_data)
-        #
-        # self.plot_2d_box_in_image_plane(
-        #     image_data=left_camera_image,
-        #     gts_in_camera_coordinate_system=self._gts_in_camera_coordinate_system)
-        #
-        # self.plot_3d_box_in_image_plane(
-        #     image_data=left_camera_image,
-        #     gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system)
-        #
+        # visualization
+        self.plot_velodyne_points_in_image_plane(
+            image_data=left_camera_image,
+            pc_data=pc_data)
+
+        self.plot_2d_box_in_image_plane(
+            image_data=left_camera_image,
+            gts_in_camera_coordinate_system=self._gts_in_camera_coordinate_system)
+
+        self.plot_3d_box_in_image_plane(
+            image_data=left_camera_image,
+            gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system)
+
         self.plot_3d_box_in_velodyne_coordinate_system(
             pc_data=pc_data,
-            gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system,
-            enable_bird_eye_view=False)
-
-        # self.plot_3d_box_in_velodyne_coordinate_system(
-        #     pc_data=pc_data,
-        #     gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system,
-        #     enable_bird_eye_view=True)
+            gts_in_velodyne_coordinate_system=self._gts_in_velodyne_coordinate_system)
 
 
 if __name__ == "__main__":
     tools = KITTITools(
-        image_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/image_2/000052.png",
-        calibration_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/calib/000052.txt",
-        label_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/label_2/000052.txt",
-        cloud_points_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/velodyne/000052.bin",
+        image_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/image_2/000054.png",
+        calibration_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/calib/000054.txt",
+        label_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/label_2/000054.txt",
+        cloud_points_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/velodyne/000054.bin",
     )
 
     tools.run()
