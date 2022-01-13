@@ -373,6 +373,11 @@ class KITTITools(object):
         """
         point_cloud = o3d.geometry.PointCloud()
         point_cloud.points = o3d.utility.Vector3dVector(pc_data[:, 0:3])
+
+        # dump cloud points for network debug
+        with open('./temp/points_velodyne_000025.npy', 'wb') as f:
+            np.save(f, pc_data)
+
         geometries = [point_cloud]
 
         for index, gt in enumerate(gts_in_velodyne_coordinate_system):
@@ -423,10 +428,10 @@ class KITTITools(object):
 
 if __name__ == "__main__":
     tools = KITTITools(
-        image_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/image_2/000054.png",
-        calibration_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/calib/000054.txt",
-        label_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/label_2/000054.txt",
-        cloud_points_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/velodyne/000054.bin",
+        image_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/image_2/000025.png",
+        calibration_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/calib/000025.txt",
+        label_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/label_2/000025.txt",
+        cloud_points_full_path="../dataset/KITTI_3D_OBJECT_DETECTION_SAMPLED_DATASET/training/velodyne/000025.bin",
     )
 
     tools.run()

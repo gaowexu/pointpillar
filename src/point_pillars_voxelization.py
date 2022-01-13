@@ -7,7 +7,11 @@ class PointPillarVoxelization(nn.Module):
     """
     Points cloud voxelization class
     """
-    def __init__(self, voxel_size, point_cloud_range, max_num_points=32, max_voxels=16000):
+    def __init__(self,
+                 voxel_size=(0.16, 0.16, 4.0),
+                 point_cloud_range=(0, -39.68, -3, 69.12, 39.68, 1),
+                 max_num_points=100,
+                 max_voxels=12000):
         """
         Constructor
 
@@ -17,8 +21,8 @@ class PointPillarVoxelization(nn.Module):
         :param max_voxels: The maximum number of voxels. May be a tuple with values for training and testing.
         """
         super().__init__()
-        self._voxel_size = voxel_size
-        self._point_cloud_range = point_cloud_range
+        self._voxel_size = torch.Tensor(voxel_size)
+        self._point_cloud_range = torch.Tensor(point_cloud_range)
         self._max_num_points = max_num_points
         self._points_range_min = torch.Tensor(point_cloud_range[:3])
         self._points_range_max = torch.Tensor(point_cloud_range[3:])
@@ -28,11 +32,11 @@ class PointPillarVoxelization(nn.Module):
         """
         Forward function
 
-        :param points_feats: Tensor with point coordinates and features. The shape is [N, 3+C] with N as the number
-                             of points and C as the number of feature channels. Here C=1 for the feature reflectance.
+        :param points_feats: Tensor with point coordinates and features. The shape is [N, 4] with N as the number
+                             of points. Here 4 indicates [x, y, z, reflectance].
         :return: (out_pillars, out_coords, out_num_points)
                  * out_pillars is a dense list of point coordinates and features for each pillar.
-                   The shape is [num_pillars, max_num_points, 3+C]. Attention: num_pillars here is different with
+                   The shape is [num_pillars, max_num_points, 4]. Attention: num_pillars here is different with
                    the maximum number of pillars P noted in paper. It is the number of elements in dense list.
                  * out_coords is tensor with the integer pillars coords and shape [num_voxels,3].
                    Note that the order of dims is [z,y,x].
@@ -123,4 +127,3 @@ class PointPillarVoxelization(nn.Module):
         out_num_points = out_num_points[in_bounds]
 
         return out_voxels, out_coords, out_num_points
-
