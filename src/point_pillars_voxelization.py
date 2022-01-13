@@ -32,12 +32,56 @@ class PointPillarVoxelization(nn.Module):
                              of points and C as the number of feature channels. Here C=1 for the feature reflectance.
         :return: (out_pillars, out_coords, out_num_points)
                  * out_pillars is a dense list of point coordinates and features for each pillar.
-                   The shape is [num_pillars, max_num_points, 3+C].
+                   The shape is [num_pillars, max_num_points, 3+C]. Attention: num_pillars here is different with
+                   the maximum number of pillars P noted in paper. It is the number of elements in dense list.
                  * out_coords is tensor with the integer pillars coords and shape [num_voxels,3].
                    Note that the order of dims is [z,y,x].
                  * out_num_points is a 1D tensor with the number of points in each pillar.
+
+                A Typical (out_pillars, out_coords, out_num_points) tuple would be like:
+
+                out_voxels = tensor([[[0.1000, 0.1000, 0.1000],
+                         [0.1200, 0.1300, 0.4100],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000]],
+
+                        [[0.5000, 0.5000, 0.5000],
+                         [0.9000, 0.8000, 0.7500],
+                         [0.5000, 0.5000, 0.5000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000]],
+
+                        [[1.7000, 1.7000, 1.7000],
+                         [1.8000, 1.8000, 1.8000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000]],
+
+                        [[2.3000, 2.1000, 2.4000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000],
+                         [0.0000, 0.0000, 0.0000]]])
+                out_coords = tensor([[0, 0, 0],
+                        [1, 1, 1],
+                        [3, 3, 3],
+                        [4, 4, 4]], dtype=torch.int32)
+                out_num_points = tensor([2, 3, 2, 1])
         """
-        # points with shape (N, 3)
+        # Points with shape (N, 3)
         points = points_feats[:, :3]
 
         # (nx, ny, nz)
@@ -64,9 +108,10 @@ class PointPillarVoxelization(nn.Module):
         ) + 1
 
         out_voxels = feats[voxels_point_indices_dense]
+
+        # Convert [x,y,z] to [z,y,x] order
         out_coords = ans.voxel_coords[:, [2, 1, 0]].contiguous()
-        out_num_points = ans.voxel_point_row_splits[
-            1:] - ans.voxel_point_row_splits[:-1]
+        out_num_points = ans.voxel_point_row_splits[1:] - ans.voxel_point_row_splits[:-1]
 
         # Filter out pillars generated out of bounds of the pseudo image.
         in_bounds_y = out_coords[:, 1] < num_voxels[1]
