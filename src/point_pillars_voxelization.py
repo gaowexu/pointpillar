@@ -5,7 +5,7 @@ from open3d.ml.torch.ops import voxelize, ragged_to_dense
 
 class PointPillarVoxelization(nn.Module):
     """
-    Points cloud voxelization class
+    将稀疏的点云进行体素化，在PointPillar这篇文章中voxel实际中等同于pillar, 即voxel是一种更为泛化的表征，其z方向不限制即为pillar
     """
     def __init__(self,
                  voxel_size=(0.16, 0.16, 4.0),
@@ -13,27 +13,27 @@ class PointPillarVoxelization(nn.Module):
                  max_num_points=100,
                  max_voxels=12000):
         """
-        Constructor
+        构造函数
 
-        :param voxel_size: voxel edge lengths with format [x, y, z].
-        :param point_cloud_range: The valid range of point coordinates as [x_min, y_min, z_min, x_max, y_max, z_max].
-        :param max_num_points: The maximum number of points per pillar.
-        :param max_voxels: The maximum number of voxels. May be a tuple with values for training and testing.
+        :param voxel_size: 最小体素尺寸，分别为 Velodyne坐标系下 x, y, z 三个方向的尺寸
+        :param point_cloud_range: 点云集合中考虑的范围，[x_min, y_min, z_min, x_max, y_max, z_max]，落在该范围之外的点云不作考虑
+        :param max_num_points: 每一个体素中最大的点云点数，若落在某一个体素中的点云数量超过该数值，需要进行随机降采样；反之，补零
+        :param max_voxels: 考虑的最大体素数量
         """
         super().__init__()
         self._voxel_size = torch.Tensor(voxel_size)
         self._point_cloud_range = torch.Tensor(point_cloud_range)
         self._max_num_points = max_num_points
-        self._points_range_min = torch.Tensor(point_cloud_range[:3])
-        self._points_range_max = torch.Tensor(point_cloud_range[3:])
+        self._points_range_min = torch.Tensor(point_cloud_range[:3])    # (x_min, y_min, z_min)
+        self._points_range_max = torch.Tensor(point_cloud_range[3:])    # (x_max, y_max, z_max)
         self._max_voxels = max_voxels
 
-    def forward(self, points_feats):
+    def forward(self, raw_points):
         """
-        Forward function
+        前向推理函数
 
-        :param points_feats: Tensor with point coordinates and features. The shape is [N, 4] with N as the number
-                             of points. Here 4 indicates [x, y, z, reflectance].
+        :param raw_points: 原始点云序列，形状为(N, 4), 其中不同帧的点云数量不同，即N不同，4代表的是位置和激光反射强度特征，
+                           即[x, y, z, reflectance].
         :return: (out_pillars, out_coords, out_num_points)
                  * out_pillars is a dense list of point coordinates and features for each pillar.
                    The shape is [num_pillars, max_num_points, 4]. Attention: num_pillars here is different with
@@ -41,54 +41,10 @@ class PointPillarVoxelization(nn.Module):
                  * out_coords is tensor with the integer pillars coords and shape [num_voxels,3].
                    Note that the order of dims is [z,y,x].
                  * out_num_points is a 1D tensor with the number of points in each pillar.
-
-                A Typical (out_pillars, out_coords, out_num_points) tuple would be like:
-
-                out_voxels = tensor([[[0.1000, 0.1000, 0.1000],
-                         [0.1200, 0.1300, 0.4100],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000]],
-
-                        [[0.5000, 0.5000, 0.5000],
-                         [0.9000, 0.8000, 0.7500],
-                         [0.5000, 0.5000, 0.5000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000]],
-
-                        [[1.7000, 1.7000, 1.7000],
-                         [1.8000, 1.8000, 1.8000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000]],
-
-                        [[2.3000, 2.1000, 2.4000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 0.0000]]])
-                out_coords = tensor([[0, 0, 0],
-                        [1, 1, 1],
-                        [3, 3, 3],
-                        [4, 4, 4]], dtype=torch.int32)
-                out_num_points = tensor([2, 3, 2, 1])
         """
-        # Points with shape (N, 3)
-        points = points_feats[:, :3]
+        points = raw_points[:, :3]      # 形状为(N, 3), 不同帧的点云数量不同，即N不同
 
-        # (nx, ny, nz)
+        # 计算Velodyne坐标系中 x,y,z三个方向的体素数量
         num_voxels = ((self._points_range_max - self._points_range_min) / self._voxel_size).type(torch.int32)
 
         ans = voxelize(
@@ -101,7 +57,7 @@ class PointPillarVoxelization(nn.Module):
         )
 
         # Prepend row with zeros which maps to index 0 which maps to void points
-        feats = torch.cat([torch.zeros_like(points_feats[0:1, :]), points_feats])
+        feats = torch.cat([torch.zeros_like(raw_points[0:1, :]), raw_points])
 
         # Create dense matrix of indices. index 0 maps to the zero vector
         voxels_point_indices_dense = ragged_to_dense(
