@@ -79,12 +79,12 @@ class PointPillars(nn.Module):
         batch_of_coords = torch.cat(coors_batch_with_pad, dim=0)
         return batch_of_voxels, batch_of_num_points, batch_of_coords
 
-    def extract_feats(self, batch_points):
+    def forward(self, inputs):
         """
-        Extract feature from samples in a batch
+        Forward function
 
-        :param batch_points: points cloud of a batch, with type of list in which each element is a tensor.Tensor
-                             with shape (N, max_num_points, 4). Note that N is different for each sample.
+        :param inputs: points cloud of a batch, with type of list in which each element is a tensor.Tensor with shape
+                       (N, max_num_points, 4). Note that N is different for each sample.
         :return:
         """
         # Perform voxelization
@@ -107,25 +107,10 @@ class PointPillars(nn.Module):
         print("batch_canvas.shape = {}".format(batch_canvas.shape))
 
 
-
         # x = self.backbone(x)
         # x = self.neck(x)
-        # return x
-
-    def forward(self, inputs):
-        """
-        Forward function
-
-        :param inputs: points cloud of a batch, with type of list in which each element is a tensor.Tensor with shape
-                       (N, max_num_points, 4). Note that N is different for each sample.
-        :return:
-        """
-        x = self.extract_feats(batch_points=inputs)
         # outs = self.bbox_head(x)
         # return outs
-
-    def loss(self, ground_truth, predictions):
-        pass
 
 
 if __name__ == '__main__':
@@ -138,7 +123,20 @@ if __name__ == '__main__':
         points_sample_000025 = np.load(f)
         points_sample_000025 = points_sample_000025[np.where(points_sample_000025[:, 0] > 0)]
 
-    batch_points = [torch.Tensor(points_sample_000008, device="cpu"), torch.Tensor(points_sample_000025, device="cpu")]
+    with open('./temp/points_velodyne_000031.npy', 'rb') as f:
+        points_sample_000031 = np.load(f)
+        points_sample_000031 = points_sample_000031[np.where(points_sample_000031[:, 0] > 0)]
+
+    with open('./temp/points_velodyne_000032.npy', 'rb') as f:
+        points_sample_000032 = np.load(f)
+        points_sample_000032 = points_sample_000032[np.where(points_sample_000032[:, 0] > 0)]
+
+    batch_points = [
+        torch.Tensor(points_sample_000008, device="cpu"),
+        torch.Tensor(points_sample_000025, device="cpu"),
+        torch.Tensor(points_sample_000031, device="cpu"),
+        torch.Tensor(points_sample_000032, device="cpu"),
+    ]
 
     handler = PointPillars()
     handler(inputs=batch_points)

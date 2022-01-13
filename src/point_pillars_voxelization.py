@@ -44,9 +44,10 @@ class PointPillarVoxelization(nn.Module):
         """
         points = raw_points[:, :3]      # 形状为(N, 3), 不同帧的点云数量不同，即N不同
 
-        # 计算Velodyne坐标系中 x,y,z三个方向的体素数量
+        # 计算Velodyne坐标系中 x,y,z三个方向的体素数量，输出为 [432, 496, 1]
         num_voxels = ((self._points_range_max - self._points_range_min) / self._voxel_size).type(torch.int32)
 
+        # 体素化计算
         ans = voxelize(
             points=points,
             row_splits=torch.LongTensor([0, points.shape[0]]).to(points.device),
