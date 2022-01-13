@@ -115,20 +115,20 @@ class PointPillars(nn.Module):
 
 if __name__ == '__main__':
     import numpy as np
-    with open('./temp/points_velodyne_000008.npy', 'rb') as f:
-        points_sample_000008 = np.load(f)
+    with open('./temp/points_velodyne_000008.npy', 'rb') as f1:
+        points_sample_000008 = np.load(f1)
         points_sample_000008 = points_sample_000008[np.where(points_sample_000008[:, 0] > 0)]
 
-    with open('./temp/points_velodyne_000025.npy', 'rb') as f:
-        points_sample_000025 = np.load(f)
+    with open('./temp/points_velodyne_000025.npy', 'rb') as f2:
+        points_sample_000025 = np.load(f2)
         points_sample_000025 = points_sample_000025[np.where(points_sample_000025[:, 0] > 0)]
 
-    with open('./temp/points_velodyne_000031.npy', 'rb') as f:
-        points_sample_000031 = np.load(f)
+    with open('./temp/points_velodyne_000031.npy', 'rb') as f3:
+        points_sample_000031 = np.load(f3)
         points_sample_000031 = points_sample_000031[np.where(points_sample_000031[:, 0] > 0)]
 
-    with open('./temp/points_velodyne_000032.npy', 'rb') as f:
-        points_sample_000032 = np.load(f)
+    with open('./temp/points_velodyne_000032.npy', 'rb') as f4:
+        points_sample_000032 = np.load(f4)
         points_sample_000032 = points_sample_000032[np.where(points_sample_000032[:, 0] > 0)]
 
     batch_points = [

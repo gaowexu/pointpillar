@@ -43,6 +43,7 @@ class PointPillarVoxelization(nn.Module):
                  * out_num_points is a 1D tensor with the number of points in each pillar.
         """
         points = raw_points[:, :3]      # 形状为(N, 3), 不同帧的点云数量不同，即N不同
+        print("points.shape = {}".format(points.shape))
 
         # 计算Velodyne坐标系中 x,y,z三个方向的体素数量，输出为 [432, 496, 1]
         num_voxels = ((self._points_range_max - self._points_range_min) / self._voxel_size).type(torch.int32)
@@ -53,12 +54,21 @@ class PointPillarVoxelization(nn.Module):
             row_splits=torch.LongTensor([0, points.shape[0]]).to(points.device),
             voxel_size=self._voxel_size,
             points_range_min=self._points_range_min,
-            points_range_max=self._points_range_max,
-            max_voxels=self._max_voxels
+            points_range_max=self._points_range_max
         )
 
-        # Prepend row with zeros which maps to index 0 which maps to void points
-        feats = torch.cat([torch.zeros_like(raw_points[0:1, :]), raw_points])
+        # 获取体素化后的体素总数量，论文中将该值限制为最大12000， 即 Max number of Pillars, P
+        actual_num_of_voxels = ans.voxel_coords.shape[0]
+
+        # TODO: 当体素化的实际体素数量超过所设定的阈值 self._max_voxels 时，随机降采样？
+
+        # 在点云的第一行前添加一行0，该行索引为0，意味着补0，
+        points_with_prepend_zero_row = torch.cat([torch.zeros_like(raw_points[0:1, :]), raw_points])
+
+        print("ans.voxel_point_indices = {}, shape = {}".format(ans.voxel_point_indices, ans.voxel_point_indices.shape))
+        print("ans.voxel_point_row_splits = {}, shape = {}".format(ans.voxel_point_row_splits, ans.voxel_point_row_splits.shape))
+        print("ans.voxel_coords = {}, shape = {}".format(ans.voxel_coords, ans.voxel_coords.shape))
+        print("ans.voxel_batch_splits = {}, shape = {}".format(ans.voxel_batch_splits, ans.voxel_batch_splits.shape))
 
         # Create dense matrix of indices. index 0 maps to the zero vector
         voxels_point_indices_dense = ragged_to_dense(
@@ -68,7 +78,7 @@ class PointPillarVoxelization(nn.Module):
             default_value=torch.tensor(-1)
         ) + 1
 
-        out_voxels = feats[voxels_point_indices_dense]
+        out_voxels = points_with_prepend_zero_row[voxels_point_indices_dense]
 
         # Convert [x,y,z] to [z,y,x] order
         out_coords = ans.voxel_coords[:, [2, 1, 0]].contiguous()
@@ -84,3 +94,18 @@ class PointPillarVoxelization(nn.Module):
         out_num_points = out_num_points[in_bounds]
 
         return out_voxels, out_coords, out_num_points
+
+
+if __name__ == "__main__":
+    import numpy as np
+    with open('./temp/points_velodyne_000008.npy', 'rb') as f1:
+        points_sample_000008 = np.load(f1)
+        points_sample_000008 = points_sample_000008[np.where(points_sample_000008[:, 0] > 0)]
+
+    voxelizer = PointPillarVoxelization()
+    out_voxels, out_coords, out_num_points = voxelizer(raw_points=torch.Tensor(points_sample_000008, device='cpu'))
+
+    print("\n")
+    print("out_voxels.shape = {}".format(out_voxels.shape))
+    print("out_coords.shape = {}".format(out_coords.shape))
+    print("out_num_points.shape = {}".format(out_num_points.shape))
