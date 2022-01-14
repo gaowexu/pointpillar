@@ -11,7 +11,7 @@ class PointPillarVoxelization(nn.Module):
                  voxel_size=(0.16, 0.16, 4.0),
                  point_cloud_range=(0, -39.68, -3, 69.12, 39.68, 1),
                  max_num_points=100,
-                 max_voxels=12000):
+                 max_voxels=9223372036854775807):
         """
         构造函数
 
@@ -34,16 +34,16 @@ class PointPillarVoxelization(nn.Module):
 
         :param raw_points: 原始点云序列，形状为(N, 4), 其中不同帧的点云数量不同，即N不同，4代表的是位置和激光反射强度特征，
                            即[x, y, z, reflectance].
-        :return: (out_pillars, out_coords, out_num_points)
-                 * out_pillars is a dense list of point coordinates and features for each pillar.
-                   The shape is [num_pillars, max_num_points, 4]. Attention: num_pillars here is different with
-                   the maximum number of pillars P noted in paper. It is the number of elements in dense list.
-                 * out_coords is tensor with the integer pillars coords and shape [num_voxels,3].
-                   Note that the order of dims is [z,y,x].
-                 * out_num_points is a 1D tensor with the number of points in each pillar.
+        :return: (out_voxels, out_coords, out_num_points)
+                 * out_voxels: 指的是体素的密集表示，它是一个形状为 (num_voxels, max_num_points, 4) 的torch.Tensor, 其中
+                               num_voxels指的是输入原始点云 raw_points 经过体素化后的体素数量（即Pillar数量），不同帧的点云
+                               序列体素化之后的 num_voxels 一般各不相同，max_num_points 指的是一个体素中设定的最大点云数量，
+                               过多则降采样，过少则补零
+                 * out_coords: 指的是原始点云体素化后每一个体素对应的坐标，形状为(num_voxels, 3), 注意此处的 3 代表的坐标顺序
+                               为 velodyne 坐标系中的 [z, y, x]
+                 * out_num_points: 指的是每一个体素中的实际有效的点云数量，它是一个一维数组，类型为torch.Tensor
         """
         points = raw_points[:, :3]      # 形状为(N, 3), 不同帧的点云数量不同，即N不同
-        print("points.shape = {}".format(points.shape))
 
         # 计算Velodyne坐标系中 x,y,z三个方向的体素数量，输出为 [432, 496, 1]
         num_voxels = ((self._points_range_max - self._points_range_min) / self._voxel_size).type(torch.int32)
@@ -54,7 +54,8 @@ class PointPillarVoxelization(nn.Module):
             row_splits=torch.LongTensor([0, points.shape[0]]).to(points.device),
             voxel_size=self._voxel_size,
             points_range_min=self._points_range_min,
-            points_range_max=self._points_range_max
+            points_range_max=self._points_range_max,
+            max_voxels=self._max_voxels
         )
 
         # 获取体素化后的体素总数量，论文中将该值限制为最大12000， 即 Max number of Pillars, P
@@ -65,12 +66,7 @@ class PointPillarVoxelization(nn.Module):
         # 在点云的第一行前添加一行0，该行索引为0，意味着补0，
         points_with_prepend_zero_row = torch.cat([torch.zeros_like(raw_points[0:1, :]), raw_points])
 
-        print("ans.voxel_point_indices = {}, shape = {}".format(ans.voxel_point_indices, ans.voxel_point_indices.shape))
-        print("ans.voxel_point_row_splits = {}, shape = {}".format(ans.voxel_point_row_splits, ans.voxel_point_row_splits.shape))
-        print("ans.voxel_coords = {}, shape = {}".format(ans.voxel_coords, ans.voxel_coords.shape))
-        print("ans.voxel_batch_splits = {}, shape = {}".format(ans.voxel_batch_splits, ans.voxel_batch_splits.shape))
-
-        # Create dense matrix of indices. index 0 maps to the zero vector
+        # 计算点云dense表达下的索引矩阵，voxels_point_indices_dense的形状为 (actual_num_of_voxels, self._max_num_points)
         voxels_point_indices_dense = ragged_to_dense(
             values=ans.voxel_point_indices,
             row_splits=ans.voxel_point_row_splits,
@@ -78,34 +74,21 @@ class PointPillarVoxelization(nn.Module):
             default_value=torch.tensor(-1)
         ) + 1
 
+        # 获取体素矩阵，每一个体素中点云数量为self._max_num_points个（可能包括补充的0），out_voxels形状为
+        # (actual_num_of_voxels, self._max_num_points，4)
         out_voxels = points_with_prepend_zero_row[voxels_point_indices_dense]
 
-        # Convert [x,y,z] to [z,y,x] order
+        # 将点云的索引顺序从 [x,y,z] 改为 [z,y,x]
         out_coords = ans.voxel_coords[:, [2, 1, 0]].contiguous()
         out_num_points = ans.voxel_point_row_splits[1:] - ans.voxel_point_row_splits[:-1]
 
-        # Filter out pillars generated out of bounds of the pseudo image.
+        # 剔除落在指定x/y 范围内的体素
         in_bounds_y = out_coords[:, 1] < num_voxels[1]
         in_bounds_x = out_coords[:, 2] < num_voxels[0]
         in_bounds = torch.logical_and(in_bounds_x, in_bounds_y)
 
-        out_coords = out_coords[in_bounds]
         out_voxels = out_voxels[in_bounds]
+        out_coords = out_coords[in_bounds]
         out_num_points = out_num_points[in_bounds]
 
         return out_voxels, out_coords, out_num_points
-
-
-if __name__ == "__main__":
-    import numpy as np
-    with open('./temp/points_velodyne_000008.npy', 'rb') as f1:
-        points_sample_000008 = np.load(f1)
-        points_sample_000008 = points_sample_000008[np.where(points_sample_000008[:, 0] > 0)]
-
-    voxelizer = PointPillarVoxelization()
-    out_voxels, out_coords, out_num_points = voxelizer(raw_points=torch.Tensor(points_sample_000008, device='cpu'))
-
-    print("\n")
-    print("out_voxels.shape = {}".format(out_voxels.shape))
-    print("out_coords.shape = {}".format(out_coords.shape))
-    print("out_num_points.shape = {}".format(out_num_points.shape))

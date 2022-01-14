@@ -8,20 +8,18 @@ from torch.nn.functional import pad
 
 class PointPillars(nn.Module):
     def __init__(self,
-                 name="PointPillars",
-                 device="cuda",
                  point_cloud_range=(0, -39.68, -3, 69.12, 39.68, 1),
                  voxel_size=(0.16, 0.16, 4.0),
                  max_num_points=100,
-                 max_pillars=12000):
+                 max_pillars=9223372036854775807):
         super().__init__()
-        self._name = name
-        self._device = device
+        self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self._point_cloud_range = point_cloud_range
         self._voxel_size = voxel_size
         self._max_num_points = max_num_points
         self._max_pillars = max_pillars
 
+        # 体素化器
         self._point_pillars_voxelizer = PointPillarVoxelization(
             voxel_size=self._voxel_size,
             point_cloud_range=self._point_cloud_range,
@@ -29,6 +27,7 @@ class PointPillars(nn.Module):
             max_voxels=self._max_pillars
         )
 
+        # point pillar特征提取网络
         self._point_pillars_feature_net = PointPillarFeatureNet(
             in_channels=4,
             feat_channels=64,
@@ -36,33 +35,32 @@ class PointPillars(nn.Module):
             point_cloud_range=self._point_cloud_range
         )
 
+        # 伪图像生成器
         self._point_pillars_scatter = PointPillarScatter(
             in_channels=64,
             output_shape=torch.Tensor([69.12/0.16, 39.68 * 2/0.16]).type(torch.int)
         )
 
     @torch.no_grad()
-    def voxelize(self, raw_points_batch):
+    def voxelize_batch(self, raw_points_batch):
         """
-        Apply hard voxelization to points
+        对一个Batch的原始点云执行体素化
 
-        :param raw_points_batch: List, a batch of points cloud, each element is a torch.Tensor with shape (Q, 4).
-                                 Q is the original amount of points in a single frame, and for different samples,
-                                 Q is usually different.
+        :param raw_points_batch: 数组, 其长度为 batch_size, 每一个元素为 torch.Tensor 类型，每一个元素的形状为 (Q, 4).
+                                 Q 指的是一帧激光雷达扫描到的点云数量，不同帧之间 Q 通常而言各不相同
         :return: (batch_of_voxels, batch_of_num_points, batch_of_coords)
-                 * batch_of_voxels: torch.Tensor with shape (U, max_num_points, 4), where U is the accumulated value of
-                                    dense pillars' amount of all samples in input batch.
-                 * batch_of_num_points: torch.Tensor, which is a 1-D tensor indicates how many points in each pillar.
-                 * batch_of_coords: torch.Tensor with shape (U, 4), 4 indicates [sample_index, z, y, x]
+                 * batch_of_voxels: 类型为 torch.Tensor, 指的是一个batch中样本体素化之后的表征，其形状为 (U, max_num_points, 4),
+                                    其中 U 为该 batch 中所有样本进行体素化之后的体素数量总和，体素也指Pillar.
+                 * batch_of_num_points: 类型为torch.Tensor, 形状为 (U,), 它是一个一维数组，指的是每一个体素中的有效点云数量
+                 * batch_of_coords: 类型为torch.Tensor，形状为 (U, 4), 其中 4 表示 [sample_index, z, y, x]
         """
         batch_of_voxels, batch_of_num_points, batch_of_coords = list(), list(), list()
 
         for raw_points in raw_points_batch:
-            # raw_points is with shape (Q, 4), Q is different for different samples
-            # res_voxels is a torch.Tensor with shape (N, self._max_num_points, 4)
-            # res_coors is a torch.Tensor with shape (N, 3)
-            # res_num_points is a torch.Tensor with shape (N)
-            # Note that for each raw_points, N is also different.
+            # raw_points 形状为 (Q, 4), Q 指的是一帧激光雷达扫描到的点云数量，不同帧之间 Q 通常而言各不相同
+            # 输出 res_voxels 形状为 (N, self._max_num_points, 4)，N 为 该帧点云体素化后的实际体素数量，不同帧之间各不相同
+            # 输出 res_coors 形状为 (N, 3)
+            # 输出 res_num_points 形状为 (N,)
             res_voxels, res_coors, res_num_points = self._point_pillars_voxelizer(raw_points)
 
             batch_of_voxels.append(res_voxels)
@@ -79,21 +77,21 @@ class PointPillars(nn.Module):
         batch_of_coords = torch.cat(coors_batch_with_pad, dim=0)
         return batch_of_voxels, batch_of_num_points, batch_of_coords
 
-    def forward(self, inputs):
+    def forward(self, raw_points_batch):
         """
-        Forward function
+        前向处理函数
 
-        :param inputs: points cloud of a batch, with type of list in which each element is a tensor.Tensor with shape
-                       (N, max_num_points, 4). Note that N is different for each sample.
+        :param raw_points_batch: 数组, 其长度为 batch_size, 每一个元素为 torch.Tensor 类型，每一个元素的形状为 (Q, 4).
+                                 Q 指的是一帧激光雷达扫描到的点云数量，不同帧之间 Q 通常而言各不相同
         :return:
         """
-        # Perform voxelization
-        # batch_of_voxels's shape = (U, max_num_points, 4), where U is the accumulated value of dense pillars'
-        # amount of all samples in input batch.
-        # batch_of_num_points's shape = (U,)
-        # batch_of_coords'shape = (U, 4)
-        batch_of_voxels, batch_of_num_points, batch_of_coords = self.voxelize(batch_points)
+        # 步骤一：执行体素化
+        # 输出 batch_of_voxels 形状为 (U, max_num_points, 4), U 为该 batch 中所有样本进行体素化之后的体素数量总和
+        # 输出 batch_of_num_points 形状为 (U,), 它是一个一维数组，指的是每一个体素中的有效点云数量
+        # batch_of_coords 形状为 形状为 (U, 4), 其中 4 表示 [sample_index, z, y, x]
+        batch_of_voxels, batch_of_num_points, batch_of_coords = self.voxelize_batch(raw_points_batch=raw_points_batch)
 
+        # 步骤二：提取体素/pillar中的点云特征
         # Extract pillar features, output pillar_features's shape is (U, 64), 64 is the C in paper.
         pillar_features = self._point_pillars_feature_net(batch_of_voxels, batch_of_num_points, batch_of_coords)
         batch_size = batch_of_coords[-1, 0].item() + 1
@@ -139,11 +137,4 @@ if __name__ == '__main__':
     ]
 
     handler = PointPillars()
-    handler(inputs=batch_points)
-
-
-
-
-
-
-
+    handler(raw_points_batch=batch_points)
