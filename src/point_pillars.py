@@ -75,6 +75,7 @@ class PointPillars(nn.Module):
         batch_of_voxels = torch.cat(batch_of_voxels, dim=0)
         batch_of_num_points = torch.cat(batch_of_num_points, dim=0)
         batch_of_coords = torch.cat(coors_batch_with_pad, dim=0)
+
         return batch_of_voxels, batch_of_num_points, batch_of_coords
 
     def forward(self, raw_points_batch):
@@ -92,17 +93,17 @@ class PointPillars(nn.Module):
         batch_of_voxels, batch_of_num_points, batch_of_coords = self.voxelize_batch(raw_points_batch=raw_points_batch)
 
         # 步骤二：提取体素/pillar中的点云特征
-        # Extract pillar features, output pillar_features's shape is (U, 64), 64 is the C in paper.
+        # 输出 pillar_features 的形状为 (U, 64), U 为该 batch 中所有样本进行体素化之后的体素数量总和，
+        # 64 为体素中点云进行特征提取后的特征维度
         pillar_features = self._point_pillars_feature_net(batch_of_voxels, batch_of_num_points, batch_of_coords)
         batch_size = batch_of_coords[-1, 0].item() + 1
 
-        # Converts learned features (output of PFNLayer) from dense tensor to sparse pseudo image.
-        # Output batch_canvas's shape is (batch_size, C, x_range/0.16, y_range/0.16), C=64 in paper.
+        # 将学习得到的体素点云特征重新转化为伪图像形式
+        # 输出 batch_canvas 的维度信息为 (batch_size, C, ny, nx), 论文中 C=64
         batch_canvas = self._point_pillars_scatter(
-            pillar_features=pillar_features,
-            coords=batch_of_coords,
+            batch_pillar_features=pillar_features,
+            batch_coords=batch_of_coords,
             batch_size=batch_size)
-        print("batch_canvas.shape = {}".format(batch_canvas.shape))
 
 
         # x = self.backbone(x)
@@ -130,8 +131,8 @@ if __name__ == '__main__':
         points_sample_000032 = points_sample_000032[np.where(points_sample_000032[:, 0] > 0)]
 
     batch_points = [
-        torch.Tensor(points_sample_000008, device="cpu"),
-        torch.Tensor(points_sample_000025, device="cpu"),
+        # torch.Tensor(points_sample_000008, device="cpu"),
+        # torch.Tensor(points_sample_000025, device="cpu"),
         torch.Tensor(points_sample_000031, device="cpu"),
         torch.Tensor(points_sample_000032, device="cpu"),
     ]

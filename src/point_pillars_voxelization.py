@@ -82,7 +82,7 @@ class PointPillarVoxelization(nn.Module):
         out_coords = ans.voxel_coords[:, [2, 1, 0]].contiguous()
         out_num_points = ans.voxel_point_row_splits[1:] - ans.voxel_point_row_splits[:-1]
 
-        # 剔除落在指定x/y 范围内的体素
+        # 剔除落在指定x/y范围外的体素
         in_bounds_y = out_coords[:, 1] < num_voxels[1]
         in_bounds_x = out_coords[:, 2] < num_voxels[0]
         in_bounds = torch.logical_and(in_bounds_x, in_bounds_y)
