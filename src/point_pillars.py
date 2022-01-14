@@ -11,7 +11,7 @@ class PointPillars(nn.Module):
                  point_cloud_range=(0, -39.68, -3, 69.12, 39.68, 1),
                  voxel_size=(0.16, 0.16, 4.0),
                  max_num_points=100,
-                 max_pillars=9223372036854775807):
+                 max_pillars=2400*1200):
         super().__init__()
         self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self._point_cloud_range = point_cloud_range
@@ -98,13 +98,14 @@ class PointPillars(nn.Module):
         pillar_features = self._point_pillars_feature_net(batch_of_voxels, batch_of_num_points, batch_of_coords)
         batch_size = batch_of_coords[-1, 0].item() + 1
 
-        # 将学习得到的体素点云特征重新转化为伪图像形式
+        # 步骤三：将学习得到的体素点云特征重新转化为伪图像形式
         # 输出 batch_canvas 的维度信息为 (batch_size, C, ny, nx), 论文中 C=64
         batch_canvas = self._point_pillars_scatter(
             batch_pillar_features=pillar_features,
             batch_coords=batch_of_coords,
             batch_size=batch_size)
 
+        print("batch_canvas.shape = {}".format(batch_canvas.shape))
 
         # x = self.backbone(x)
         # x = self.neck(x)
@@ -131,8 +132,8 @@ if __name__ == '__main__':
         points_sample_000032 = points_sample_000032[np.where(points_sample_000032[:, 0] > 0)]
 
     batch_points = [
-        # torch.Tensor(points_sample_000008, device="cpu"),
-        # torch.Tensor(points_sample_000025, device="cpu"),
+        torch.Tensor(points_sample_000008, device="cpu"),
+        torch.Tensor(points_sample_000025, device="cpu"),
         torch.Tensor(points_sample_000031, device="cpu"),
         torch.Tensor(points_sample_000032, device="cpu"),
     ]
