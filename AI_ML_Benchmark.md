@@ -1,45 +1,71 @@
-# Benchmark of AI/ML Close-Loop Vendors
+## Data-Driven Closed-Loop Capability Evaluation Benchmark for Autonomous Driving
 
 
 
+### 1. Tasks
+
+- [ ] Camera Calibration
+- [ ] Lidar Calibration
+- [ ] 2D Object Detection (Image)
+  - Traffic Light Detection & Color Classification
+  - Vehicles, cyclist, pedestrians, pets, ... detection
+  - Others
+- [ ] 3D Object Detection (Lidar Points Cloud)
+  - 3D vehicles, cyclists, pedestrians, motorcars, scooters, ... detection
+- [ ] Agents Motion Prediction (Time Series)
+  - Agents motion prediction (road topology map, road context, ...)
+- [ ] Multi-Modal Object Detection & Fusion (Low-level fusion)
+  - Image & Lidar objects joint detection
+  
+TODO: Radar data ?
 
 
-### 1. Tasks Supported
-
-| Tasks                             | Description |
-| -----------                       | ----------- |
-| 2D image detection                |        |
-| 3D Lidar points cloud detection   |         |
-| camera Calibration                |           |
+### 2. Data & Annotations
 
 
-### 2. Data Annotations
+### 3. State-of-the-art Algorithms
+- [ ] 2D Object Detection
+  - YOLO-v5
+  - SSD
+  - ...
+- [ ] 3D Object Detection
+  - PointPillar
+  - VoxelNet
+  - CenterPoint
+  - ...
+- [ ] Motion Predction
+  - LaneGCN
+  - TPNet
+  - DenseTNT
+  - ...
+
+### 4. Training Platform
+
+- [ ] Reserved Platform
+- [ ] On-Demand Platform
 
 
+### 5. Optimization for Edge Devices
+- [ ] Inference Time Cost ?
+- [ ] Memory Cost ?
+- [ ] Hardware Platform ?
+- [ ] Performance Report ?
 
 
-### 3. Training Platform
+### 6. Model Registry
+- [ ] Data & Annotation Versioning
+- [ ] Model Optimization & Acceleration
+- [ ] Model Storage & Management
+- [ ] Model Deployment & Serving
+- [ ] Model Performance Monitoring
 
 
+### 7. CI/CD Pipeline
+- [ ] Code Management 
+- [ ] CI/CD
 
 
-### 4. Inference Devices
+### 8. Collaboration 
+- Our priorities?
+- How to proceed?
 
-
-### 5. AIOps 
-
-| Syntax      | Description |
-| ----------- | ----------- |
-| Header      | Title       |
-| Paragraph   | Text        |
-
-
-- Data & Pipeline versioning
-- Model Storage & Management 
-- Hyper-parameter Tuning
-- Orchestration & Workflow Pipelines
-- Model Deployment & Serving
-- Production Model Monitoring
-
-
-### 7. Collaboration 
