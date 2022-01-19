@@ -3,6 +3,7 @@ from torch import nn
 from point_pillar_net import PointPillarFeatureNet
 from point_pillars_scatter import PointPillarScatter
 from point_pillars_voxelization import PointPillarVoxelization
+from point_pillars_backbone import PointPillarBackbone
 from torch.nn.functional import pad
 
 
@@ -40,6 +41,9 @@ class PointPillars(nn.Module):
             in_channels=64,
             output_shape=torch.Tensor([69.12/0.16, 39.68 * 2/0.16]).type(torch.int)
         )
+
+        # Backbone特征提取器
+        self._point_pillars_backbone = PointPillarBackbone()
 
     @torch.no_grad()
     def voxelize_batch(self, raw_points_batch):
@@ -105,10 +109,11 @@ class PointPillars(nn.Module):
             batch_coords=batch_of_coords,
             batch_size=batch_size)
 
-        print("batch_canvas.shape = {}".format(batch_canvas.shape))
+        # 步骤四：利用Backbone提取伪图像的特征，输出维度为 (batch_size, 6C, ny/2, nx/2)
+        backbone_feats = self._point_pillars_backbone(batch_canvas=batch_canvas)
+        print("backbone_feats.shape = {}".format(backbone_feats.shape))
 
-        # x = self.backbone(x)
-        # x = self.neck(x)
+        # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
         # outs = self.bbox_head(x)
         # return outs
 

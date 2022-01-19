@@ -45,7 +45,7 @@ TODO: Radar data ?
 - [ ] On-Demand Platform
 
 
-### 5. Optimization for Edge Devices
+### 5. Optimization for Accelerators
 - [ ] Inference Time Cost ?
 - [ ] Memory Cost ?
 - [ ] Hardware Platform ?
@@ -55,7 +55,7 @@ TODO: Radar data ?
 ### 6. Model Registry
 - [ ] Data & Annotation Versioning
 - [ ] Model Optimization & Acceleration
-- [ ] Model Storage & Management
+- [ ] Model Artifacts Storage & Management
 - [ ] Model Deployment & Serving
 - [ ] Model Performance Monitoring
 
