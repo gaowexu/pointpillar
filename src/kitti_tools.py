@@ -375,8 +375,8 @@ class KITTITools(object):
         point_cloud.points = o3d.utility.Vector3dVector(pc_data[:, 0:3])
 
         # dump cloud points for network debug
-        with open('./temp/points_velodyne_000032.npy', 'wb') as f:
-            np.save(f, pc_data)
+        # with open('./temp/points_velodyne_000032.npy', 'wb') as f:
+        #     np.save(f, pc_data)
 
         geometries = [point_cloud]
 
