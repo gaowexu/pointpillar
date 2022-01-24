@@ -11,10 +11,12 @@
 
 
 ### Environment Setup
+Launch an EC2 with OS Ubuntu 20.04 with GPU supported, and then download PyTorch 1.7.1 with CUDA 11.0 complied: https://github.com/isl-org/open3d_downloads/releases/tag/torch1.7.1
 
-
+Install open3d and torch with following commands:
 ```angular2html
 pip3 install open3d==0.14.1
+pip3 install torch-1.7.1-cp38-cp38-linux_x86_64.whl
 ```
 
 ### Prepare KITTI Dataset
