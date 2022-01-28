@@ -51,7 +51,7 @@ class PointPillarVoxelization(nn.Module):
         # 体素化计算
         ans = voxelize(
             points=points,
-            row_splits=torch.LongTensor([0, points.shape[0]]).to(points.device),
+            # row_splits=torch.LongTensor([0, points.shape[0]]).to(points.device),
             voxel_size=self._voxel_size,
             points_range_min=self._points_range_min,
             points_range_max=self._points_range_max,
