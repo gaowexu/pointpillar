@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from point_pillar_net import PointPillarFeatureNet
 from point_pillars_scatter import PointPillarScatter
-from point_pillars_voxelization import PointPillarVoxelization
+from point_pillars_voxelization import PointPillarVoxelGenerator
 from point_pillars_backbone import PointPillarBackbone
 from point_pillars_anchor_3d_head import PointPillarAnchor3DHead
 from torch.nn.functional import pad
@@ -12,50 +12,53 @@ class PointPillars(nn.Module):
     def __init__(self,
                  point_cloud_range=(0, -39.68, -3, 69.12, 39.68, 1),
                  voxel_size=(0.16, 0.16, 4.0),
-                 max_num_points=100,
-                 max_pillars=2400*1200):
+                 max_points_per_voxel=100,
+                 max_number_of_voxels=(16000, 40000)):
+        """
+        构造函数
+
+        :param point_cloud_range: 点云范围，[x_min, y_min, z_min, x_max, y_max, z_max]
+        :param voxel_size: 体素大小
+        :param max_points_per_voxel: 单个体素(pillar)中考虑的最大点数
+        :param max_number_of_voxels: 训练和测试阶段考虑的最大体素(pillar)数量
+        """
         super().__init__()
         self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self._point_cloud_range = point_cloud_range
         self._voxel_size = voxel_size
-        self._max_num_points = max_num_points
-        self._max_pillars = max_pillars
+        self._max_points_per_voxel = max_points_per_voxel
+        self._max_number_of_voxels = max_number_of_voxels
 
         # 体素化器
-        self._point_pillars_voxelizer = PointPillarVoxelization(
+        self._point_pillars_voxel_generator = PointPillarVoxelGenerator(
             voxel_size=self._voxel_size,
             point_cloud_range=self._point_cloud_range,
             max_num_points=self._max_num_points,
             max_voxels=self._max_pillars
         )
 
-        # point pillar特征提取网络
-        self._point_pillars_feature_net = PointPillarFeatureNet(
-            in_channels=4,
-            feat_channels=64,
-            bin_size=self._voxel_size[0:2],
-            point_cloud_range=self._point_cloud_range
-        )
-
-        # 伪图像生成器
-        self._point_pillars_scatter = PointPillarScatter(
-            in_channels=64,
-            output_shape=torch.Tensor([69.12/0.16, 39.68 * 2/0.16]).type(torch.int)
-        )
-
-        # Backbone特征提取器
-        self._point_pillars_backbone = PointPillarBackbone()
-
+        # # point pillar特征提取网络
+        # self._point_pillars_feature_net = PointPillarFeatureNet(
+        #     in_channels=4,
+        #     feat_channels=64,
+        #     bin_size=self._voxel_size[0:2],
+        #     point_cloud_range=self._point_cloud_range
+        # )
         #
-        self._point_pillars_anchor_3d_head = PointPillarAnchor3DHead()
-
-        self.loss_cls = FocalLoss(**loss.get("focal_loss", {}))
-        self.loss_bbox = SmoothL1Loss(**loss.get("smooth_l1", {}))
-        self.loss_dir = CrossEntropyLoss(**loss.get("cross_entropy", {}))
-
+        # # 伪图像生成器
+        # self._point_pillars_scatter = PointPillarScatter(
+        #     in_channels=64,
+        #     output_shape=torch.Tensor([69.12/0.16, 39.68 * 2/0.16]).type(torch.int)
+        # )
+        #
+        # # Backbone特征提取器
+        # self._point_pillars_backbone = PointPillarBackbone()
+        #
+        # # Detection Head
+        # self._point_pillars_anchor_3d_head = PointPillarAnchor3DHead()
 
     @torch.no_grad()
-    def voxelize_batch(self, raw_points_batch):
+    def batch_voxelize(self, raw_points_batch):
         """
         对一个Batch的原始点云执行体素化
 
@@ -74,7 +77,7 @@ class PointPillars(nn.Module):
             # 输出 res_voxels 形状为 (N, self._max_num_points, 4)，N 为 该帧点云体素化后的实际体素数量，不同帧之间各不相同
             # 输出 res_coors 形状为 (N, 3)
             # 输出 res_num_points 形状为 (N,)
-            res_voxels, res_coors, res_num_points = self._point_pillars_voxelizer(raw_points)
+            res_voxels, res_coors, res_num_points = self._point_pillars_voxel_generator(raw_points)
 
             batch_of_voxels.append(res_voxels)
             batch_of_num_points.append(res_num_points)
@@ -103,7 +106,7 @@ class PointPillars(nn.Module):
         # 输出 batch_of_voxels 形状为 (U, max_num_points, 4), U 为该 batch 中所有样本进行体素化之后的体素数量总和
         # 输出 batch_of_num_points 形状为 (U,), 它是一个一维数组，指的是每一个体素中的有效点云数量
         # batch_of_coords 形状为 形状为 (U, 4), 其中 4 表示 [sample_index, z, y, x]
-        batch_of_voxels, batch_of_num_points, batch_of_coords = self.voxelize_batch(raw_points_batch=raw_points_batch)
+        batch_of_voxels, batch_of_num_points, batch_of_coords = self.batch_voxelize(raw_points_batch=raw_points_batch)
 
         # 步骤二：提取体素/pillar中的点云特征
         # 输出 pillar_features 的形状为 (U, 64), U 为该 batch 中所有样本进行体素化之后的体素数量总和，

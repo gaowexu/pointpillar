@@ -1,9 +1,9 @@
 import torch
 from torch import nn
-from open3d.ml.torch.ops import voxelize, ragged_to_dense
+from spconv.utils import Point2VoxelGPU3d as VoxelGenerator
 
 
-class PointPillarVoxelization(nn.Module):
+class PointPillarVoxelGenerator(nn.Module):
     """
     将稀疏的点云进行体素化，在PointPillar这篇文章中voxel实际中等同于pillar, 即voxel是一种更为泛化的表征，其z方向不限制即为pillar
     """
