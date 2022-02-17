@@ -7,8 +7,8 @@ class VoxelGenerator(object):
     将稀疏的点云进行体素化，在PointPillar这篇文章中voxel实际中等同于pillar, 即voxel是一种更为泛化的表征，其z方向不限制即为pillar
     """
     def __init__(self,
-                 voxel_size=[0.16, 0.16, 4.0],
-                 point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
+                 voxel_size=None,
+                 point_cloud_range=None,
                  max_num_points_per_voxel=100,
                  max_num_voxels=16000):
         """
@@ -20,6 +20,10 @@ class VoxelGenerator(object):
         :param max_num_voxels: 考虑的最大体素数量
         """
         super().__init__()
+        if voxel_size is None:
+            voxel_size = [0.16, 0.16, 4.0]
+        if point_cloud_range is None:
+            point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
         self._voxel_size = voxel_size
         self._point_cloud_range = point_cloud_range
         self._max_num_points_per_voxel = max_num_points_per_voxel
