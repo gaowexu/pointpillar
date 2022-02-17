@@ -4,7 +4,7 @@ from point_pillar_net import PointPillarFeatureNet
 from point_pillars_scatter import PointPillarScatter
 from point_pillars_voxelization import PointPillarVoxelGenerator
 from point_pillars_backbone import PointPillarBackbone
-from point_pillars_anchor_3d_head import PointPillarAnchor3DHead
+# from point_pillars_anchor_3d_head import PointPillarAnchor3DHead
 from torch.nn.functional import pad
 
 
@@ -33,7 +33,7 @@ class PointPillars(nn.Module):
         self._point_pillars_voxel_generator = PointPillarVoxelGenerator(
             voxel_size=self._voxel_size,
             point_cloud_range=self._point_cloud_range,
-            max_num_points=self._max_num_points,
+            max_num_points=self._max_points_per_voxel,
             max_voxels=self._max_pillars
         )
 
@@ -122,13 +122,13 @@ class PointPillars(nn.Module):
             batch_size=batch_size)
 
         print("batch_canvas.shape = {}".format(batch_canvas.shape))
-
-        # 步骤四：利用Backbone提取伪图像的特征，输出维度为 (batch_size, 6C, ny/2, nx/2)
-        backbone_feats = self._point_pillars_backbone(batch_canvas=batch_canvas)
-
-        # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
-        outs = self.bbox_head(x)
-        return outs
+        #
+        # # 步骤四：利用Backbone提取伪图像的特征，输出维度为 (batch_size, 6C, ny/2, nx/2)
+        # backbone_feats = self._point_pillars_backbone(batch_canvas=batch_canvas)
+        #
+        # # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
+        # outs = self.bbox_head(x)
+        # return outs
 
 
 if __name__ == '__main__':
@@ -150,10 +150,10 @@ if __name__ == '__main__':
         points_sample_000032 = points_sample_000032[np.where(points_sample_000032[:, 0] > 0)]
 
     batch_points = [
-        torch.Tensor(points_sample_000008, device="cpu"),
-        torch.Tensor(points_sample_000025, device="cpu"),
-        torch.Tensor(points_sample_000031, device="cpu"),
-        torch.Tensor(points_sample_000032, device="cpu"),
+        torch.Tensor(points_sample_000008, device="cpu").cuda(),
+        torch.Tensor(points_sample_000025, device="cpu").cuda(),
+        torch.Tensor(points_sample_000031, device="cpu").cuda(),
+        torch.Tensor(points_sample_000032, device="cpu").cuda(),
     ]
 
     handler = PointPillars()
