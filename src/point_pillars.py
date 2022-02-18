@@ -32,7 +32,7 @@ class PointPillars(nn.Module):
         self._point_pillars_feature_net = PointPillarFeatureNet(
             in_channels=4,
             feat_channels=64,
-            bin_size=self._voxel_size[0:2],
+            voxel_size=self._voxel_size,
             point_cloud_range=self._point_cloud_range
         )
 
@@ -85,7 +85,7 @@ class PointPillars(nn.Module):
     #
     #     return batch_of_voxels, batch_of_num_points, batch_of_coords
 
-    def forward(self, voxels, indices, num_per_voxel, sample_index):
+    def forward(self, voxels, indices, nums_per_voxel, sample_indices):
         """
         前向处理函数
 
@@ -93,35 +93,42 @@ class PointPillars(nn.Module):
                        数量，例如 batch_size = 4时，四个样本的体素化后体素数量分别为 m1, m2, m3, m4. 则 M = m1 + m2 + m3 + m4.
                        4为原始点云的输入维度，分别表示 [x, y, z, intensity]
         :param indices: torch.Tensor, 形状为 (M, 3), 表示每一个体素（Pillar）对应的坐标索引，顺序为 z, y, x
-        :param num_per_voxel: torch.Tensor, 形状为(M, )，表示每一个体素内的有效点云点数
-        :param sample_index: torch.Tensor， 形状为(M, ), 表示当前体素属于 batch 中的哪一个，即索引
+        :param nums_per_voxel: torch.Tensor, 形状为(M, )，表示每一个体素内的有效点云点数
+        :param sample_indices: torch.Tensor， 形状为(M, ), 表示当前体素属于 batch 中的哪一个，即索引
         :return:
         """
         # 步骤一：提取体素中的点云特征
         # 输出 pillar_features 的形状为 (M, 64), M 为该 batch 中所有样本进行体素化之后的体素数量总和，
         # 64 为体素中点云进行特征提取后的特征维度
-        pillar_features = self._point_pillars_feature_net(voxels, batch_of_num_points, batch_of_coords)
-        batch_size = batch_of_coords[-1, 0].item() + 1
+        pillar_features = self._point_pillars_feature_net(voxels, indices, nums_per_voxel, sample_indices)
 
-        # 步骤二：将学习得到的体素点云特征重新转化为伪图像形式
-        # 输出 batch_canvas 的维度信息为 (batch_size, C, ny, nx), 论文中 C=64
-        batch_canvas = self._point_pillars_scatter(
-            batch_pillar_features=pillar_features,
-            batch_coords=batch_of_coords,
-            batch_size=batch_size)
 
-        print("batch_canvas.shape = {}".format(batch_canvas.shape))
 
-        # 步骤三：利用Backbone提取伪图像的特征，输出维度为 (batch_size, 6C, ny/2, nx/2)
-        backbone_feats = self._point_pillars_backbone(batch_canvas=batch_canvas)
 
-        # # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
-        # outs = self.bbox_head(x)
-        # return outs
+        #
+        # batch_size = batch_of_coords[-1, 0].item() + 1
+        #
+        # # 步骤二：将学习得到的体素点云特征重新转化为伪图像形式
+        # # 输出 batch_canvas 的维度信息为 (batch_size, C, ny, nx), 论文中 C=64
+        # batch_canvas = self._point_pillars_scatter(
+        #     batch_pillar_features=pillar_features,
+        #     batch_coords=batch_of_coords,
+        #     batch_size=batch_size)
+        #
+        # print("batch_canvas.shape = {}".format(batch_canvas.shape))
+        #
+        # # 步骤三：利用Backbone提取伪图像的特征，输出维度为 (batch_size, 6C, ny/2, nx/2)
+        # backbone_feats = self._point_pillars_backbone(batch_canvas=batch_canvas)
+        #
+        # # # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
+        # # outs = self.bbox_head(x)
+        # # return outs
 
 
 if __name__ == '__main__':
     import numpy as np
+    from point_pillars_voxelization import VoxelGenerator
+
     with open('./temp/points_velodyne_000008.npy', 'rb') as f1:
         points_sample_000008 = np.load(f1)
         points_sample_000008 = points_sample_000008[np.where(points_sample_000008[:, 0] > 0)]
@@ -138,12 +145,37 @@ if __name__ == '__main__':
         points_sample_000032 = np.load(f4)
         points_sample_000032 = points_sample_000032[np.where(points_sample_000032[:, 0] > 0)]
 
-    batch_points = [
-        torch.Tensor(points_sample_000008, device="cpu").cuda(),
-        torch.Tensor(points_sample_000025, device="cpu").cuda(),
-        torch.Tensor(points_sample_000031, device="cpu").cuda(),
-        torch.Tensor(points_sample_000032, device="cpu").cuda(),
-    ]
+    voxel_generator = VoxelGenerator(
+        voxel_size=[0.16, 0.16, 4.0],
+        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
+        max_num_points_per_voxel=100,
+        max_num_voxels=16000
+    )
 
-    handler = PointPillars()
-    handler(raw_points_batch=batch_points)
+    voxels_000008, indices_000008, num_per_voxel_000008, _ = voxel_generator.generate(points=points_sample_000008)
+    voxels_000025, indices_000025, num_per_voxel_000025, _ = voxel_generator.generate(points=points_sample_000025)
+    voxels_000031, indices_000031, num_per_voxel_000031, _ = voxel_generator.generate(points=points_sample_000031)
+    voxels_000032, indices_000032, num_per_voxel_000032, _ = voxel_generator.generate(points=points_sample_000032)
+
+    print("voxels_000008.shape = {}".format(voxels_000008.shape))
+    print("voxels_000025.shape = {}".format(voxels_000025.shape))
+    print("voxels_000031.shape = {}".format(voxels_000031.shape))
+    print("voxels_000032.shape = {}".format(voxels_000032.shape))
+
+    voxels = torch.cat((voxels_000008, voxels_000025, voxels_000031, voxels_000032), dim=0)
+    indices = torch.cat((indices_000008, indices_000025, indices_000031, indices_000032), dim=0)
+    nums_per_voxel = torch.cat((num_per_voxel_000008, num_per_voxel_000025, num_per_voxel_000031, num_per_voxel_000032), dim=0)
+    sample_indices = torch.cat((
+        torch.zeros(voxels_000008.shape[0]),
+        torch.ones(voxels_000025.shape[0]),
+        2 * torch.ones(voxels_000031.shape[0]),
+        3 * torch.ones(voxels_000032.shape[0]),
+    ), dim=0)
+
+    print("voxels.shape = {}".format(voxels.shape))
+    print("indices.shape = {}".format(indices.shape))
+    print("nums_per_voxel.shape = {}".format(nums_per_voxel.shape))
+    print("sample_indices.shape = {}".format(sample_indices.shape))
+
+    model = PointPillars()
+    model(voxels=voxels, indices=indices, nums_per_voxel=nums_per_voxel, sample_indices=sample_indices)

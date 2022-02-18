@@ -11,13 +11,13 @@ def get_paddings_indicator(actual_num, max_num, axis=0):
     :param max_num: int, 体素化过程中每一个体素的最大点数
     :param axis: 默认为0
     :return: torch.Tensor, 维度为 (batch_size, max_num), 一个典型的输出为：
-             tensor([[ True, False, False,  ..., False, False, False],
-                    [ True, False, False,  ..., False, False, False],
-                    [ True, False, False,  ..., False, False, False],
+             tensor([[ True, True, False,  ..., False, False, False],
+                    [ True, True, True,  ..., True, True, False],
+                    [ True, True, True,  ..., True, False, False],
                     ...,
+                    [ True, True, False,  ..., False, False, False],
                     [ True, False, False,  ..., False, False, False],
-                    [ True, False, False,  ..., False, False, False],
-                    [ True, False, False,  ..., False, False, False]])
+                    [ True, True, False,  ..., False, False, False]])
     """
     actual_num = torch.unsqueeze(actual_num, axis + 1)
     max_num_shape = [1] * len(actual_num.shape)
@@ -25,7 +25,6 @@ def get_paddings_indicator(actual_num, max_num, axis=0):
     max_num = torch.arange(max_num, dtype=torch.int, device=actual_num.device).view(max_num_shape)
     paddings_indicator = actual_num.int() > max_num
 
-    # paddings_indicator的维度为 (batch_size, max_num)
     return paddings_indicator
 
 
@@ -54,10 +53,10 @@ class PFNLayer(nn.Module):
         """
 
         :param inputs: 输入体素（或称之为 pillar）特征，即论文中的9维特征，类型为torch.Tensor,
-                       形状为(U, max_num_points, 9)
+                       形状为(M, max_points_per_voxel, 9)
         :return:
         """
-        # 全连接层，输出维度为 （U, max_num_points, 64)
+        # 全连接层，输出维度为 (M, max_points_per_voxel, 64)
         x = self._linear(inputs)
 
         # 执行Batch Normalization
@@ -65,7 +64,7 @@ class PFNLayer(nn.Module):
 
         x = F.relu(x)
 
-        # 对channels（第二维）执行取最大化操作，输出x_max的维度为（U, 1, 64)
+        # 对channels（第二维）执行取最大化操作，输出x_max的维度为(M, 1, 64)
         x_max = torch.max(x, dim=1, keepdim=True)[0]
 
         return x_max
@@ -80,19 +79,24 @@ class PointPillarFeatureNet(nn.Module):
     def __init__(self,
                  in_channels=4,
                  feat_channels=64,
-                 bin_size=(0.16, 0.16),
-                 point_cloud_range=(0, -39.68, -3, 69.12, 39.68, 1)):
+                 voxel_size=None,
+                 point_cloud_range=None):
         """
         构造函数
 
         :param in_channels: 输入点云的原始维度，默认为4，指的是 x, y, z, r (激光反射值).
         :param feat_channels: 每一个体素特征提取的输出维度，默认为64，对应论文中的 C 值
-        :param bin_size: pillar的 x 和 y 方向的分辨率尺寸. 默认值为 (0.16, 0.16)，单位为米
-        :param point_cloud_range: 考虑的Velodyne坐标系下 x/y/z三个方向的点云范围, (x_min, y_min, z_min, x_max, y_max, z_max).
+        :param voxel_size: pillar的 x 和 y 方向的分辨率尺寸. 默认值为 (0.16, 0.16)，单位为米
+        :param point_cloud_range: 考虑的激光雷达坐标系下 x/y/z三个方向的点云范围, (x_min, y_min, z_min, x_max, y_max, z_max).
                                   默认值为(0, -39.68, -3, 69.12, 39.68, 1)，x方向为车辆的正前方，y方向为车辆朝向的左侧正方向，z
                                   方向垂直向上
         """
         super(PointPillarFeatureNet, self).__init__()
+        if point_cloud_range is None:
+            point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
+        if voxel_size is None:
+            voxel_size = [0.16, 0.16, 4]
+
         assert feat_channels > 0
         assert in_channels == 4
 
@@ -103,7 +107,7 @@ class PointPillarFeatureNet(nn.Module):
         self._in_channels = in_channels + 5
 
         self._feat_channels = feat_channels
-        self._bin_size = bin_size
+        self._voxel_size = voxel_size
         self._point_cloud_range = point_cloud_range
 
         # 体素内点云集合的特征提取可以由一系列 PFNLayer 级连而成, PointPillars文章中仅仅使用了一个最简单的单一PFNLayer，即一个全
@@ -116,50 +120,65 @@ class PointPillarFeatureNet(nn.Module):
         ])
 
         # 每一个体素的物理距离，单位：米
-        self._vx = bin_size[0]
-        self._vy = bin_size[1]
+        self._vx = self._voxel_size[0]      # 体素在x方向上的分辨率
+        self._vy = self._voxel_size[1]      # 体素在y方向上的分辨率
 
-        # x和y方向上体素的起始索引对应在Velodyne坐标系中的x/y坐标值，单位：米
+        # x和y方向上体素的起始索引对应在激光雷达坐标系中的x/y坐标值，单位：米
         self._x_offset = self._vx / 2 + point_cloud_range[0]
         self._y_offset = self._vy / 2 + point_cloud_range[1]
 
-    def forward(self, features, num_points, coords):
+    def forward(self, batch_voxels, batch_zyx_indices, batch_nums_per_voxel, batch_sample_indices):
         """
         前向推理函数
 
-        :param features: 类型为 torch.Tensor, 指的是一个batch中样本体素化之后的表征，其形状为 (U, max_num_points, 4),
-                         其中 U 为该 batch 中所有样本进行体素化之后的体素数量总和，体素也指Pillar
-        :param num_points: 类型为torch.Tensor, 形状为 (U,), 它是一个一维数组，指的是每一个体素中的有效点云数量
-        :param coords: 类型为torch.Tensor，形状为 (U, 4), 其中 4 表示 [sample_index, z, y, x]
+        :param batch_voxels: torch.Tensor, 形状为 (M, max_points_per_voxel, 4). 其中 M 为当前 batch 中点云样本进行体
+                             素化后的总体素数量，例如 batch_size = 4时，四个样本的体素化后体素数量分别为 m1, m2, m3, m4.
+                             则 M = m1 + m2 + m3 + m4. 4为原始点云的输入维度，分别表示 [x, y, z, intensity]
+        :param batch_zyx_indices: 类型为torch.Tensor，形状为 (M, 3), 表示每一个体素（Pillar）对应的坐标索引，顺序为 z, y, x
+        :param batch_nums_per_voxel: 类型为torch.Tensor, torch.Tensor, 形状为(M, )，表示每一个体素内的有效点云点数
+        :param batch_sample_indices: torch.Tensor, 形状为(M, ), 表示当前体素属于 batch 中的哪一个，即索引
         :return:
         """
-        features_ls = [features]
+        features_ls = [batch_voxels]
 
-        # 计算当前体素/pillar中各个点距离所有点的算数平均值的距离，即论文中的 x_c, y_c, z_c 特征
-        points_mean = features[:, :, :3].sum(dim=1, keepdim=True) / num_points.type_as(features).view(-1, 1, 1)
-        f_cluster = features[:, :, :3] - points_mean            # 形状为 (num_pillars, max_num_points, 3)
+        # 对于每一个体素，计算当前体素中各个点距离当前体素中所有点的算数平均值的距离，即论文中的 x_c, y_c, z_c 特征,
+        # points_mean的维度大小为(M, 1, 3)
+        points_mean = batch_voxels[:, :, :3].sum(dim=1, keepdim=True) / batch_nums_per_voxel.type_as(batch_voxels).view(-1, 1, 1)
+
+        # f_cluster 的维度为 (M, max_points_per_voxel, 3)
+        f_cluster = batch_voxels[:, :, :3] - points_mean
         features_ls.append(f_cluster)
 
-        # 计算各个点距离体素/pillar中心点的距离特征，即论文中的 x_p, y_p 特征
-        feats_offset = features[:, :, :2].clone().detach()      # 形状为 (num_pillars, max_num_points, 2)
-        feats_offset[:, :, 0] = feats_offset[:, :, 0] - (coords[:, 3].type_as(features).unsqueeze(1) * self._vx +
-                                                         self._x_offset)
-        feats_offset[:, :, 1] = feats_offset[:, :, 1] - (coords[:, 2].type_as(features).unsqueeze(1) * self._vy +
-                                                         self._y_offset)
+        # 对于每一个体素，计算各个点距离体素中心点的距离特征，即论文中的 x_p, y_p 特征,
+        # feats_offset的形状为 (M, max_points_per_voxel, 2)
+        feats_offset = batch_voxels[:, :, :2].clone().detach()
+        feats_offset[:, :, 0] = feats_offset[:, :, 0] - (
+                batch_zyx_indices[:, 2].type_as(batch_voxels).unsqueeze(1) * self._vx + self._x_offset)
+        feats_offset[:, :, 1] = feats_offset[:, :, 1] - (
+                batch_zyx_indices[:, 1].type_as(batch_voxels).unsqueeze(1) * self._vy + self._y_offset)
+
         features_ls.append(feats_offset)
 
-        # 合并上述的特征，即论文中的feature decorations, 执行完成之后 features 的维度为 (num_pillars, max_num_points, 9)
+        # 合并上述的特征，即论文中的feature decorations, 执行完成之后 features 的维度为 (M, max_points_per_voxel, 9)
         features = torch.cat(features_ls, dim=-1)
 
         # 由于上述计算特征 x_c, y_c, z_c， x_p, y_p 时，没有区分体素化过程中补充的零，实际上这些补充的零在进行特征decoration之后
-        # 仍然需要保持为零，所以这里需要将这些补充出来的点云重新设置为零
-        voxel_count = features.shape[1]
-        mask = get_paddings_indicator(num_points, voxel_count, axis=0)
-        mask = torch.unsqueeze(mask, -1).type_as(features)      # 形状为 (num_pillars, max_num_points, 1)
+        # 仍然需要保持为零，所以这里需要将这些补充出来的点云特征重新设置为零
+        max_points_per_voxel = features.shape[1]
+
+        # mask 输出维度为 (M, max_points_per_voxel)
+        mask = get_paddings_indicator(batch_nums_per_voxel, max_points_per_voxel, axis=0)
+
+        # mask 在最后一维上扩充一维，输出形状为 (M, max_points_per_voxel, 1)
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+
+        # 将这些补充出来的点云特征重新设置为零, features 维度为(M, max_points_per_voxel, 9)
         features *= mask
 
         # 体素特征提取
         for pfn in self._pfn_layers:
             features = pfn(features)
 
-        return features.squeeze(dim=1)
+        # 经过 Pillar Feature Net 处理之后的特征维度为 (M, 64)
+        features = features.squeeze(dim=1)
+        return features
