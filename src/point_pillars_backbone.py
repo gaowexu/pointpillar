@@ -22,11 +22,11 @@ class PointPillarBackbone(nn.Module):
     """
     def __init__(self,
                  pillar_feats_channels=64,
-                 down_sample_out_channels=[64, 128, 256],
-                 layers_num_in_blocks=[4, 6, 6],
-                 down_sample_strides=[2, 2, 2],
-                 up_sample_out_channels=[128, 128, 128],
-                 up_sample_strides=[1, 2, 4],
+                 down_sample_out_channels=None,
+                 layers_num_in_blocks=None,
+                 down_sample_strides=None,
+                 up_sample_out_channels=None,
+                 up_sample_strides=None,
                  use_conv_for_no_stride=False):
         """
         构造函数
@@ -40,6 +40,17 @@ class PointPillarBackbone(nn.Module):
         :param use_conv_for_no_stride:
         """
         super().__init__()
+        if up_sample_strides is None:
+            up_sample_strides = [1, 2, 4]
+        if up_sample_out_channels is None:
+            up_sample_out_channels = [128, 128, 128]
+        if down_sample_strides is None:
+            down_sample_strides = [2, 2, 2]
+        if layers_num_in_blocks is None:
+            layers_num_in_blocks = [4, 6, 6]
+        if down_sample_out_channels is None:
+            down_sample_out_channels = [64, 128, 256]
+
         self._pillar_feats_channels = pillar_feats_channels
         self._down_sample_out_channels = down_sample_out_channels
         self._layers_num_in_blocks = layers_num_in_blocks
@@ -120,8 +131,8 @@ class PointPillarBackbone(nn.Module):
         """
         前向推理函数
 
-        :param batch_canvas: 一个batch的点云伪图，其形状为 (batch_size, C, ny, nx)
-        :return: 输出维度为 (batch_size, 6C, ny/2, nx/2)
+        :param batch_canvas: 一个batch的点云伪图，其形状为 (batch_size, C, nx, ny)
+        :return: 输出维度为 (batch_size, 6C, nx/2, ny/2)
         """
         block_0_out = self._down_sampling_blocks[0](batch_canvas)
         block_1_out = self._down_sampling_blocks[1](block_0_out)

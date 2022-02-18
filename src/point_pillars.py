@@ -39,7 +39,8 @@ class PointPillars(nn.Module):
         # 伪图像生成器
         self._point_pillars_scatter = PointPillarScatter(
             in_channels=64,
-            output_shape=torch.Tensor([69.12/0.16, 39.68 * 2/0.16]).type(torch.int)
+            nx=(self._point_cloud_range[3] - self._point_cloud_range[0]) / self._voxel_size[0],
+            ny=(self._point_cloud_range[4] - self._point_cloud_range[1]) / self._voxel_size[1]
         )
 
         # Backbone特征提取器
@@ -47,43 +48,6 @@ class PointPillars(nn.Module):
 
         # # Detection Head
         # self._point_pillars_anchor_3d_head = PointPillarAnchor3DHead()
-
-    # @torch.no_grad()
-    # def batch_voxelize(self, raw_points_batch):
-    #     """
-    #     对一个Batch的原始点云执行体素化
-    #
-    #     :param raw_points_batch: 数组, 其长度为 batch_size, 每一个元素为 torch.Tensor 类型，每一个元素的形状为 (Q, 4).
-    #                              Q 指的是一帧激光雷达扫描到的点云数量，不同帧之间 Q 通常而言各不相同
-    #     :return: (batch_of_voxels, batch_of_num_points, batch_of_coords)
-    #              * batch_of_voxels: 类型为 torch.Tensor, 指的是一个batch中样本体素化之后的表征，其形状为 (U, max_num_points, 4),
-    #                                 其中 U 为该 batch 中所有样本进行体素化之后的体素数量总和，体素也指Pillar.
-    #              * batch_of_num_points: 类型为torch.Tensor, 形状为 (U,), 它是一个一维数组，指的是每一个体素中的有效点云数量
-    #              * batch_of_coords: 类型为torch.Tensor，形状为 (U, 4), 其中 4 表示 [sample_index, z, y, x]
-    #     """
-    #     batch_of_voxels, batch_of_num_points, batch_of_coords = list(), list(), list()
-    #
-    #     for raw_points in raw_points_batch:
-    #         # raw_points 形状为 (Q, 4), Q 指的是一帧激光雷达扫描到的点云数量，不同帧之间 Q 通常而言各不相同
-    #         # 输出 res_voxels 形状为 (N, self._max_num_points, 4)，N 为 该帧点云体素化后的实际体素数量，不同帧之间各不相同
-    #         # 输出 res_coors 形状为 (N, 3)
-    #         # 输出 res_num_points 形状为 (N,)
-    #         res_voxels, res_coors, res_num_points = self._point_pillars_voxel_generator(raw_points)
-    #
-    #         batch_of_voxels.append(res_voxels)
-    #         batch_of_num_points.append(res_num_points)
-    #         batch_of_coords.append(res_coors)
-    #
-    #     coors_batch_with_pad = []
-    #     for i, coord in enumerate(batch_of_coords):
-    #         coord_pad = pad(coord, (1, 0), mode='constant', value=i)
-    #         coors_batch_with_pad.append(coord_pad)
-    #
-    #     batch_of_voxels = torch.cat(batch_of_voxels, dim=0)
-    #     batch_of_num_points = torch.cat(batch_of_num_points, dim=0)
-    #     batch_of_coords = torch.cat(coors_batch_with_pad, dim=0)
-    #
-    #     return batch_of_voxels, batch_of_num_points, batch_of_coords
 
     def forward(self, voxels, indices, nums_per_voxel, sample_indices):
         """
@@ -102,27 +66,22 @@ class PointPillars(nn.Module):
         # 64 为体素中点云进行特征提取后的特征维度
         pillar_features = self._point_pillars_feature_net(voxels, indices, nums_per_voxel, sample_indices)
 
+        # 步骤二：将学习得到的体素点云特征重新转化为伪图像形式
+        # 输出 batch_canvas 的维度信息为 (batch_size, C, nx, ny), 论文中 C=64, nx=432, ny=496
+        batch_size = int(sample_indices[-1].item() + 1)
+        batch_canvas = self._point_pillars_scatter(
+            batch_pillar_features=pillar_features,
+            batch_indices=indices,
+            sample_indices=sample_indices,
+            batch_size=batch_size)
 
+        # 步骤三：利用Backbone提取伪图像的特征，输出维度为 (batch_size, 6C, nx/2, ny/2)
+        backbone_feats = self._point_pillars_backbone(batch_canvas=batch_canvas)
+        print("backbone_feats.shape = {}".format(backbone_feats.shape))
 
-
-        #
-        # batch_size = batch_of_coords[-1, 0].item() + 1
-        #
-        # # 步骤二：将学习得到的体素点云特征重新转化为伪图像形式
-        # # 输出 batch_canvas 的维度信息为 (batch_size, C, ny, nx), 论文中 C=64
-        # batch_canvas = self._point_pillars_scatter(
-        #     batch_pillar_features=pillar_features,
-        #     batch_coords=batch_of_coords,
-        #     batch_size=batch_size)
-        #
-        # print("batch_canvas.shape = {}".format(batch_canvas.shape))
-        #
-        # # 步骤三：利用Backbone提取伪图像的特征，输出维度为 (batch_size, 6C, ny/2, nx/2)
-        # backbone_feats = self._point_pillars_backbone(batch_canvas=batch_canvas)
-        #
-        # # # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
-        # # outs = self.bbox_head(x)
-        # # return outs
+        # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
+        outs = self.bbox_head(x)
+        return outs
 
 
 if __name__ == '__main__':
