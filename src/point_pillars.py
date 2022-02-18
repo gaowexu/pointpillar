@@ -79,7 +79,7 @@ class PointPillars(nn.Module):
         print("backbone_feats.shape = {}".format(backbone_feats.shape))
 
         # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
-        outs = self.bbox_head(x)
+        outs = self._point_pillars_anchor_3d_head(backbone_feats)
         return outs
 
 

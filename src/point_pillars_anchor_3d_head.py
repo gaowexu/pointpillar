@@ -31,7 +31,7 @@ class PointPillarAnchor3DHead(nn.Module):
             self.iou_thr = self.iou_thr * num_classes
         assert len(self.iou_thr) == num_classes
 
-        # build anchor generator
+        # build anchor_utils generator
         self.anchor_generator = Anchor3DRangeGenerator(ranges=ranges,
                                                        sizes=sizes,
                                                        rotations=rotations)
@@ -43,14 +43,24 @@ class PointPillarAnchor3DHead(nn.Module):
 
         self.fp16_enabled = False
 
-        #Initialize neural network layers of the head.
+        # 构造检测头的各个神经网络模块
         self.cls_out_channels = self.num_anchors * self.num_classes
-        self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
-        self.conv_reg = nn.Conv2d(self.feat_channels,
-                                  self.num_anchors * self.box_code_size, 1)
-        self.conv_dir_cls = nn.Conv2d(self.feat_channels, self.num_anchors * 2,
-                                      1)
+        self.conv_cls = nn.Conv2d(
+            in_channels=self.feat_channels,
+            out_channels=self.cls_out_channels,
+            kernel_size=(1, 1))
 
+        self.conv_reg = nn.Conv2d(
+            in_channels=self.feat_channels,
+            out_channels=self.num_anchors * self.box_code_size,
+            kernel_size=(1, 1))
+
+        self.conv_dir_cls = nn.Conv2d(
+            in_channels=self.feat_channels,
+            out_channels=self.num_anchors * 2,
+            kernel_size=(1, 1))
+
+        # 初始化权重参数
         self.init_weights()
 
     @staticmethod
@@ -73,6 +83,12 @@ class PointPillarAnchor3DHead(nn.Module):
         self.normal_init(self.conv_reg, std=0.01)
 
     def forward(self, x):
+        """
+        前向推理函数
+
+        :param x: torch.Tensor, 输入特征，即从2D backbone传出的特征图，形状大小为 (batch_size, 6C, nx/2, ny/2)
+        :return: (cls_score, bbox, dir_cls)
+        """
         """Forward function on a feature map.
 
         Args:
@@ -96,7 +112,7 @@ class PointPillarAnchor3DHead(nn.Module):
             target_bboxes (torch.Tensor): Bbox targets.
 
         Returns:
-            torch.Tensor: Assigned target bboxes for each given anchor.
+            torch.Tensor: Assigned target bboxes for each given anchor_utils.
             torch.Tensor: Flat index of matched targets.
             torch.Tensor: Index of positive matches.
             torch.Tensor: Index of negative matches.
@@ -138,9 +154,9 @@ class PointPillarAnchor3DHead(nn.Module):
                 overlaps = bbox_overlaps(box3d_to_bev2d(target_bboxes[i]),
                                          box3d_to_bev2d(anchors_stride))
 
-                # for each anchor the gt with max IoU
+                # for each anchor_utils the gt with max IoU
                 max_overlaps, argmax_overlaps = overlaps.max(dim=0)
-                # for each gt the anchor with max IoU
+                # for each gt the anchor_utils with max IoU
                 gt_max_overlaps, _ = overlaps.max(dim=1)
 
                 pos_idx = max_overlaps >= pos_th
@@ -176,7 +192,7 @@ class PointPillarAnchor3DHead(nn.Module):
                 torch.cat(pos_idxs, axis=0), torch.cat(neg_idxs, axis=0))
 
     def get_bboxes(self, cls_scores, bbox_preds, dir_preds):
-        """Get bboxes of anchor head.
+        """Get bboxes of anchor_utils head.
 
         Args:
             cls_scores (list[torch.Tensor]): Class scores.
@@ -198,7 +214,7 @@ class PointPillarAnchor3DHead(nn.Module):
         return bboxes, scores, labels
 
     def get_bboxes_single(self, cls_scores, bbox_preds, dir_preds):
-        """Get bboxes of anchor head.
+        """Get bboxes of anchor_utils head.
 
         Args:
             cls_scores (list[torch.Tensor]): Class scores.
@@ -267,18 +283,4 @@ if __name__ == "__main__":
     feats = torch.rand(4, 384, 216, 248)    # shape is (batch_size, 6C, ny/2, nx/2)
 
     cls_score_preds, bbox_preds, dir_cls_preds = box_header(x=feats)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
