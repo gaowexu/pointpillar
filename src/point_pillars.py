@@ -3,8 +3,7 @@ from torch import nn
 from point_pillar_net import PointPillarFeatureNet
 from point_pillars_scatter import PointPillarScatter
 from point_pillars_backbone import PointPillarBackbone
-# from point_pillars_anchor_3d_head import PointPillarAnchor3DHead
-from torch.nn.functional import pad
+from point_pillars_anchor_3d_head import PointPillarAnchor3DHead
 
 
 class PointPillars(nn.Module):
@@ -46,8 +45,8 @@ class PointPillars(nn.Module):
         # Backbone特征提取器
         self._point_pillars_backbone = PointPillarBackbone()
 
-        # # Detection Head
-        # self._point_pillars_anchor_3d_head = PointPillarAnchor3DHead()
+        # Detection Head
+        self._point_pillars_anchor_3d_head = PointPillarAnchor3DHead()
 
     def forward(self, voxels, indices, nums_per_voxel, sample_indices):
         """
