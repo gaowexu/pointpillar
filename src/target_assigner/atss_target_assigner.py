@@ -113,7 +113,7 @@ class ATSSTargetAssigner(object):
         for ng in range(num_gt):
             topk_idxs[:, ng] += ng * num_anchor
 
-        # select the highest IoU if an anchor_utils box is assigned with multiple gt_boxes
+        # select the highest IoU if an anchor box is assigned with multiple gt_boxes
         INF = -0x7FFFFFFF
         ious_inf = torch.full_like(ious, INF).t().contiguous().view(-1)  # (MxN)
         index = topk_idxs.view(-1)[is_pos.view(-1)]

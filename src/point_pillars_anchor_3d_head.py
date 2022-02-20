@@ -1,7 +1,9 @@
 import torch
 from torch import nn
 import numpy as np
-from objdet_helper import Anchor3DRangeGenerator, BBoxCoder, multiclass_nms, limit_period, bbox_overlaps, box3d_to_bev2d
+from anchors.box_encoder import BBoxCoder
+from anchors.anchor_3d_generator import Anchor3DRangeGenerator
+from objdet_helper import multiclass_nms, limit_period, bbox_overlaps, box3d_to_bev2d
 
 
 class PointPillarAnchor3DHead(nn.Module):
@@ -12,10 +14,10 @@ class PointPillarAnchor3DHead(nn.Module):
                  nms_pre=100,
                  score_thr=0.1,
                  dir_offset=0,
-                 ranges=[[0, -40.0, -3, 70.0, 40.0, 1]],
-                 sizes=[[0.6, 1.0, 1.5]],
-                 rotations=[0, 1.57],
-                 iou_thr=[[0.35, 0.5]]):
+                 point_cloud_ranges=[[0, -40.0, -3, 70.0, 40.0, 1]],
+                 anchor_sizes=[[0.6, 1.0, 1.5]],
+                 anchor_rotations=[0, 1.57],
+                 iou_thresholds=[[0.35, 0.5]]):
 
         super().__init__()
         self.in_channels = in_channels
@@ -24,43 +26,34 @@ class PointPillarAnchor3DHead(nn.Module):
         self.nms_pre = nms_pre
         self.score_thr = score_thr
         self.dir_offset = dir_offset
-        self.iou_thr = iou_thr
+        self._iou_thresholds = iou_thresholds
 
-        if len(self.iou_thr) != num_classes:
-            assert len(self.iou_thr) == 1
-            self.iou_thr = self.iou_thr * num_classes
-        assert len(self.iou_thr) == num_classes
+        if len(self._iou_thresholds) != num_classes:
+            assert len(self._iou_thresholds) == 1
+            self._iou_thresholds = self._iou_thresholds * num_classes
+        assert len(self._iou_thresholds) == num_classes
 
-        # build anchor_utils generator
-        self.anchor_generator = Anchor3DRangeGenerator(ranges=ranges,
-                                                       sizes=sizes,
-                                                       rotations=rotations)
-        self.num_anchors = self.anchor_generator.num_base_anchors
+        # build anchor generator
+        self._anchor_generator = Anchor3DRangeGenerator(
+            point_cloud_ranges=point_cloud_ranges,
+            anchor_sizes=anchor_sizes,
+            anchor_rotations=anchor_rotations
+        )
+        self._num_anchors_per_location = self._anchor_generator.num_anchors_per_location
+
+        print("self._num_anchors_per_location = {}".format(self._num_anchors_per_location))
 
         # build box coder
-        self.bbox_coder = BBoxCoder()
+        self._bbox_coder = BBoxCoder()
         self.box_code_size = 7
 
         self.fp16_enabled = False
 
-        # 构造检测头的各个神经网络模块
-        self.cls_out_channels = self.num_anchors * self.num_classes
-        self.conv_cls = nn.Conv2d(
-            in_channels=self.feat_channels,
-            out_channels=self.cls_out_channels,
-            kernel_size=(1, 1))
+        # 构造神经网络预测头
+        self.conv_cls = nn.Conv2d(self.feat_channels, self._num_anchors_per_location * self.num_classes, 1)
+        self.conv_reg = nn.Conv2d(self.feat_channels, self._num_anchors_per_location * self.box_code_size, 1)
+        self.conv_dir_cls = nn.Conv2d(self.feat_channels, self._num_anchors_per_location * 2, 1)
 
-        self.conv_reg = nn.Conv2d(
-            in_channels=self.feat_channels,
-            out_channels=self.num_anchors * self.box_code_size,
-            kernel_size=(1, 1))
-
-        self.conv_dir_cls = nn.Conv2d(
-            in_channels=self.feat_channels,
-            out_channels=self.num_anchors * 2,
-            kernel_size=(1, 1))
-
-        # 初始化权重参数
         self.init_weights()
 
     @staticmethod
@@ -83,12 +76,6 @@ class PointPillarAnchor3DHead(nn.Module):
         self.normal_init(self.conv_reg, std=0.01)
 
     def forward(self, x):
-        """
-        前向推理函数
-
-        :param x: torch.Tensor, 输入特征，即从2D backbone传出的特征图，形状大小为 (batch_size, 6C, nx/2, ny/2)
-        :return: (cls_score, bbox, dir_cls)
-        """
         """Forward function on a feature map.
 
         Args:
@@ -100,8 +87,11 @@ class PointPillarAnchor3DHead(nn.Module):
         """
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
-        dir_cls_preds = None
         dir_cls_preds = self.conv_dir_cls(x)
+
+        print("cls_score.shape = {}".format(cls_score.shape))
+        print("bbox_pred.shape = {}".format(bbox_pred.shape))
+        print("dir_cls_preds.shape = {}".format(dir_cls_preds.shape))
         return cls_score, bbox_pred, dir_cls_preds
 
     def assign_bboxes(self, pred_bboxes, target_bboxes):
@@ -112,14 +102,14 @@ class PointPillarAnchor3DHead(nn.Module):
             target_bboxes (torch.Tensor): Bbox targets.
 
         Returns:
-            torch.Tensor: Assigned target bboxes for each given anchor_utils.
+            torch.Tensor: Assigned target bboxes for each given anchor.
             torch.Tensor: Flat index of matched targets.
             torch.Tensor: Index of positive matches.
             torch.Tensor: Index of negative matches.
         """
         # compute all anchors
         anchors = [
-            self.anchor_generator.grid_anchors(pred_bboxes.shape[-2:],
+            self._anchor_generator.grid_anchors(pred_bboxes.shape[-2:],
                                                device=pred_bboxes.device)
             for _ in range(len(target_bboxes))
         ]
@@ -143,7 +133,7 @@ class PointPillarAnchor3DHead(nn.Module):
 
         idx_off = 0
         for i in range(len(target_bboxes)):
-            for j, (neg_th, pos_th) in enumerate(self.iou_thr):
+            for j, (neg_th, pos_th) in enumerate(self._iou_thresholds):
                 anchors_stride = anchors[i][..., j, :, :].reshape(
                     -1, self.box_code_size)
 
@@ -154,9 +144,9 @@ class PointPillarAnchor3DHead(nn.Module):
                 overlaps = bbox_overlaps(box3d_to_bev2d(target_bboxes[i]),
                                          box3d_to_bev2d(anchors_stride))
 
-                # for each anchor_utils the gt with max IoU
+                # for each anchor the gt with max IoU
                 max_overlaps, argmax_overlaps = overlaps.max(dim=0)
-                # for each gt the anchor_utils with max IoU
+                # for each gt the anchor with max IoU
                 gt_max_overlaps, _ = overlaps.max(dim=1)
 
                 pos_idx = max_overlaps >= pos_th
@@ -169,7 +159,7 @@ class PointPillarAnchor3DHead(nn.Module):
 
                 # encode bbox for positive matches
                 assigned_bboxes.append(
-                    self.bbox_coder.encode(
+                    self._bbox_coder.encode(
                         anchors_stride[pos_idx],
                         target_bboxes[i][argmax_overlaps[pos_idx]]))
                 target_idxs.append(argmax_overlaps[pos_idx] + idx_off)
@@ -192,7 +182,7 @@ class PointPillarAnchor3DHead(nn.Module):
                 torch.cat(pos_idxs, axis=0), torch.cat(neg_idxs, axis=0))
 
     def get_bboxes(self, cls_scores, bbox_preds, dir_preds):
-        """Get bboxes of anchor_utils head.
+        """Get bboxes of anchor head.
 
         Args:
             cls_scores (list[torch.Tensor]): Class scores.
@@ -214,7 +204,7 @@ class PointPillarAnchor3DHead(nn.Module):
         return bboxes, scores, labels
 
     def get_bboxes_single(self, cls_scores, bbox_preds, dir_preds):
-        """Get bboxes of anchor_utils head.
+        """Get bboxes of anchor head.
 
         Args:
             cls_scores (list[torch.Tensor]): Class scores.
@@ -229,7 +219,7 @@ class PointPillarAnchor3DHead(nn.Module):
         assert cls_scores.size()[-2:] == bbox_preds.size()[-2:]
         assert cls_scores.size()[-2:] == dir_preds.size()[-2:]
 
-        anchors = self.anchor_generator.grid_anchors(cls_scores.shape[-2:],
+        anchors = self._anchor_generator.grid_anchors(cls_scores.shape[-2:],
                                                      device=cls_scores.device)
         anchors = anchors.reshape(-1, self.box_code_size)
 
@@ -249,7 +239,7 @@ class PointPillarAnchor3DHead(nn.Module):
             scores = scores[topk_inds, :]
             dir_scores = dir_scores[topk_inds]
 
-        bboxes = self.bbox_coder.decode(anchors, bbox_preds)
+        bboxes = self._bbox_coder.decode(anchors, bbox_preds)
 
         idxs = multiclass_nms(bboxes, scores, self.score_thr)
 
@@ -274,13 +264,34 @@ class PointPillarAnchor3DHead(nn.Module):
         return bboxes, scores, labels
 
 
-
 if __name__ == "__main__":
-    box_header = PointPillarAnchor3DHead(
-        num_classes=3,  # [pedestrian, cyclist, cars],
+    # 参考 https://github.com/open-mmlab/OpenPCDet/blob/master/tools/cfgs/kitti_models/pointpillar.yaml
+    dense_head = PointPillarAnchor3DHead(
+        num_classes=3,
+        in_channels=384,
+        feat_channels=384,
+        nms_pre=100,
+        score_thr=0.1,
+        dir_offset=0,
+        point_cloud_ranges=[
+            [0, -39.68, -1.78, 69.12, 39.68, -1.78],        # 车辆的点云范围
+            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 行人的点云范围
+            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 自行车的点云范围
+        ],
+        anchor_sizes=[
+            [1.6, 3.9, 1.56],       # 车辆的anchor尺寸, w, l, h
+            [0.6, 0.8, 1.73],       # 行人的anchor尺寸, w, l, h
+            [0.6, 1.76, 1.73]       # 自行车的anchor尺寸, w, l, h
+        ],
+        anchor_rotations=[0, 1.57],
+        iou_thresholds=[
+            [0.45, 0.60],
+            [0.35, 0.50],
+            [0.35, 0.50],
+        ]
     )
 
-    feats = torch.rand(4, 384, 216, 248)    # shape is (batch_size, 6C, ny/2, nx/2)
+    print(dense_head)
 
-    cls_score_preds, bbox_preds, dir_cls_preds = box_header(x=feats)
+    dense_head(torch.rand((4, 384, 216, 248)))
 

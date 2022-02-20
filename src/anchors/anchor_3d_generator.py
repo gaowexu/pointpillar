@@ -6,13 +6,13 @@ class Anchor3DRangeGenerator(object):
     根据 feature_map_size 生成 anchors
     """
     def __init__(self,
-                 point_cloud_range=[[0, -39.68, -3, 69.12, 39.68, 1]],
+                 point_cloud_ranges=[[0, -39.68, -3, 69.12, 39.68, 1]],
                  anchor_sizes=[[1.6, 3.9, 1.56]],
                  anchor_rotations=[0, 1.5707963]):
-        assert len(point_cloud_range) == len(anchor_sizes)
+        assert len(point_cloud_ranges) == len(anchor_sizes)
 
         self._anchor_sizes = anchor_sizes
-        self._point_cloud_range = point_cloud_range
+        self._point_cloud_ranges = point_cloud_ranges
         self._anchor_rotations = anchor_rotations
 
     @property
@@ -39,7 +39,7 @@ class Anchor3DRangeGenerator(object):
             torch.Tensor: Anchors in the overall feature map.
         """
         mr_anchors = list()
-        for pc_range, anchor_size in zip(self._point_cloud_range, self._anchor_sizes):
+        for pc_range, anchor_size in zip(self._point_cloud_ranges, self._anchor_sizes):
             mr_anchors.append(
                 self.anchors_single_range(
                     feature_map_size=feature_map_size,
@@ -131,7 +131,7 @@ class Anchor3DRangeGenerator(object):
 
 if __name__ == "__main__":
     anchor_3d_range_generator = Anchor3DRangeGenerator(
-        point_cloud_range=[
+        point_cloud_ranges=[
             [0, -39.68, -1.78, 69.12, 39.68, -1.78],        # 车辆的点云范围
             [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 行人的点云范围
             [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 自行车的点云范围
