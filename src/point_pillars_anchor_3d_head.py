@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import numpy as np
-from anchors.box_encoder import BBoxCoder
+from anchors.box_encoder import ResidualCoder
 from anchors.anchor_3d_generator import Anchor3DRangeGenerator
 from objdet_helper import multiclass_nms, limit_period, bbox_overlaps, box3d_to_bev2d
 
@@ -9,23 +9,39 @@ from objdet_helper import multiclass_nms, limit_period, bbox_overlaps, box3d_to_
 class PointPillarAnchor3DHead(nn.Module):
     def __init__(self,
                  num_classes=1,
-                 in_channels=384,
                  feat_channels=384,
                  nms_pre=100,
                  score_thr=0.1,
                  dir_offset=0,
+                 encode_angle_by_sin_cos=True,
                  point_cloud_ranges=[[0, -40.0, -3, 70.0, 40.0, 1]],
                  anchor_sizes=[[0.6, 1.0, 1.5]],
                  anchor_rotations=[0, 1.57],
                  iou_thresholds=[[0.35, 0.5]]):
+        """
+        构造函数
 
+        :param num_classes:
+        :param feat_channels:
+        :param nms_pre:
+        :param score_thr:
+        :param dir_offset:
+        :param encode_angle_by_sin_cos:
+        :param point_cloud_ranges:
+        :param anchor_sizes:
+        :param anchor_rotations:
+        :param iou_thresholds:
+        """
         super().__init__()
-        self.in_channels = in_channels
-        self.num_classes = num_classes
-        self.feat_channels = feat_channels
-        self.nms_pre = nms_pre
-        self.score_thr = score_thr
-        self.dir_offset = dir_offset
+        self._num_classes = num_classes
+        self._feat_channels = feat_channels
+        self._nms_pre = nms_pre
+        self._score_thr = score_thr
+        self._dir_offset = dir_offset
+        self._encode_angle_by_sin_cos = encode_angle_by_sin_cos
+        self._point_cloud_ranges = point_cloud_ranges
+        self._anchor_sizes = anchor_sizes
+        self._anchor_rotations = anchor_rotations
         self._iou_thresholds = iou_thresholds
 
         if len(self._iou_thresholds) != num_classes:
@@ -33,242 +49,82 @@ class PointPillarAnchor3DHead(nn.Module):
             self._iou_thresholds = self._iou_thresholds * num_classes
         assert len(self._iou_thresholds) == num_classes
 
-        # build anchor generator
+        # 创建anchor生成器
         self._anchor_generator = Anchor3DRangeGenerator(
             point_cloud_ranges=point_cloud_ranges,
             anchor_sizes=anchor_sizes,
             anchor_rotations=anchor_rotations
         )
+        # 生成 anchors
+        self._anchors = self._anchor_generator.generate_anchors()
         self._num_anchors_per_location = self._anchor_generator.num_anchors_per_location
 
-        print("self._num_anchors_per_location = {}".format(self._num_anchors_per_location))
-
-        # build box coder
-        self._bbox_coder = BBoxCoder()
-        self.box_code_size = 7
-
-        self.fp16_enabled = False
+        # 创建三维矩形框编码器
+        self._bbox_coder = ResidualCoder(encode_angle_by_sin_cos=self._encode_angle_by_sin_cos)
+        self._box_code_size = self._bbox_coder.box_code_size
 
         # 构造神经网络预测头
-        self.conv_cls = nn.Conv2d(self.feat_channels, self._num_anchors_per_location * self.num_classes, 1)
-        self.conv_reg = nn.Conv2d(self.feat_channels, self._num_anchors_per_location * self.box_code_size, 1)
-        self.conv_dir_cls = nn.Conv2d(self.feat_channels, self._num_anchors_per_location * 2, 1)
+        self._conv_cls = nn.Conv2d(
+            in_channels=self._feat_channels,
+            out_channels=self._num_anchors_per_location * self._num_classes,
+            kernel_size=1)
+
+        self._conv_box = nn.Conv2d(
+            in_channels=self._feat_channels,
+            out_channels=self._num_anchors_per_location * self._box_code_size,
+            kernel_size=1)
+
+        self._conv_dir_cls = nn.Conv2d(
+            in_channels=self._feat_channels,
+            out_channels=self._num_anchors_per_location * len(self._anchor_rotations),
+            kernel_size=1)
 
         self.init_weights()
 
-    @staticmethod
-    def bias_init_with_prob(prior_prob):
-        """Initialize conv/fc bias value according to giving probablity."""
-        bias_init = float(-np.log((1 - prior_prob) / prior_prob))
-
-        return bias_init
-
-    @staticmethod
-    def normal_init(module, mean=0, std=1, bias=0):
-        nn.init.normal_(module.weight, mean, std)
-        if hasattr(module, 'bias') and module.bias is not None:
-            nn.init.constant_(module.bias, bias)
-
     def init_weights(self):
-        """Initialize the weights of head."""
-        bias_cls = self.bias_init_with_prob(0.01)
-        self.normal_init(self.conv_cls, std=0.01, bias=bias_cls)
-        self.normal_init(self.conv_reg, std=0.01)
+        """
+        初始化权重参数
+
+        Returns:
+        """
+        pi = 0.01
+        nn.init.constant_(self._conv_cls.bias, -np.log((1 - pi) / pi))
+        nn.init.normal_(self._conv_box.weight, mean=0.0, std=0.001)
 
     def forward(self, x):
-        """Forward function on a feature map.
-
-        Args:
-            x (torch.Tensor): Input features.
-
-        Returns:
-            tuple[torch.Tensor]: Contain score of each class, bbox \
-                regression and direction classification predictions.
         """
-        cls_score = self.conv_cls(x)
-        bbox_pred = self.conv_reg(x)
-        dir_cls_preds = self.conv_dir_cls(x)
+         前向推理函数
 
-        print("cls_score.shape = {}".format(cls_score.shape))
-        print("bbox_pred.shape = {}".format(bbox_pred.shape))
-        print("dir_cls_preds.shape = {}".format(dir_cls_preds.shape))
-        return cls_score, bbox_pred, dir_cls_preds
-
-    def assign_bboxes(self, pred_bboxes, target_bboxes):
-        """Assigns target bboxes to given anchors.
-
-        Args:
-            pred_bboxes (torch.Tensor): Bbox predictions (anchors).
-            target_bboxes (torch.Tensor): Bbox targets.
-
-        Returns:
-            torch.Tensor: Assigned target bboxes for each given anchor.
-            torch.Tensor: Flat index of matched targets.
-            torch.Tensor: Index of positive matches.
-            torch.Tensor: Index of negative matches.
+        :param x: torch.Tensor, 维度为 (batch_size, 6C, nx/2, ny/2), PillarPoint中 C = 64， nx = 432, ny = 496
+        :return:
         """
-        # compute all anchors
-        anchors = [
-            self._anchor_generator.grid_anchors(pred_bboxes.shape[-2:],
-                                               device=pred_bboxes.device)
-            for _ in range(len(target_bboxes))
-        ]
+        # 类别信息前向推理， 输出维度为 (batch_size, self._num_anchors_per_location * self._num_classes, nx/2, ny/2),
+        # 默认为 (batch_size, 216, 248, 18)
+        cls_preds = self._conv_cls(x)
 
-        # compute size of anchors for each given class
-        anchors_cnt = torch.tensor(anchors[0].shape[:-1]).prod()
-        rot_angles = anchors[0].shape[-2]
+        # 三维矩形框前向推理， 输出维度为 (batch_size, self._num_anchors_per_location * self._box_code_size, nx/2, ny/2),
+        # 默认为 (batch_size, 216, 248, 42)
+        box_preds = self._conv_box(x)
 
-        # init the tensors for the final result
-        assigned_bboxes, target_idxs, pos_idxs, neg_idxs = [], [], [], []
+        # 三维矩形框方向前向推理， 输出维度为 (batch_size, elf._num_anchors_per_location * len(self._anchor_rotations),
+        # nx/2, ny/2), 默认为 (batch_size, 216, 248, 12)
+        dir_cls_preds = self._conv_dir_cls(x)
 
-        def flatten_idx(idx, j):
-            """Inject class dimension in the given indices (...
+        # 将 channel 维度移动到最后一个维度，cls_preds, box_preds, dir_cls_preds 的维度分别为
+        # (batch_size, nx/2, ny/2, self._num_anchors_per_location * self._num_classes),
+        # (batch_size, nx/2, ny/2, self._num_anchors_per_location * self._box_code_size),
+        # (batch_size, nx/2, ny/2, self._num_anchors_per_location * len(self._anchor_rotations)),
+        cls_preds = cls_preds.permute(0, 2, 3, 1).contiguous()
+        box_preds = box_preds.permute(0, 2, 3, 1).contiguous()
+        dir_cls_preds = dir_cls_preds.permute(0, 2, 3, 1).contiguous()
 
-            z * rot_angles + x) --> (.. z * num_classes * rot_angles + j * rot_angles + x)
-            """
-            z = idx // rot_angles
-            x = idx % rot_angles
-
-            return z * self.num_classes * rot_angles + j * rot_angles + x
-
-        idx_off = 0
-        for i in range(len(target_bboxes)):
-            for j, (neg_th, pos_th) in enumerate(self._iou_thresholds):
-                anchors_stride = anchors[i][..., j, :, :].reshape(
-                    -1, self.box_code_size)
-
-                if target_bboxes[i].shape[0] == 0:
-                    continue
-
-                # compute a fast approximation of IoU
-                overlaps = bbox_overlaps(box3d_to_bev2d(target_bboxes[i]),
-                                         box3d_to_bev2d(anchors_stride))
-
-                # for each anchor the gt with max IoU
-                max_overlaps, argmax_overlaps = overlaps.max(dim=0)
-                # for each gt the anchor with max IoU
-                gt_max_overlaps, _ = overlaps.max(dim=1)
-
-                pos_idx = max_overlaps >= pos_th
-                neg_idx = (max_overlaps >= 0) & (max_overlaps < neg_th)
-
-                # low-quality matching
-                for k in range(len(target_bboxes[i])):
-                    if gt_max_overlaps[k] >= neg_th:
-                        pos_idx[overlaps[k, :] == gt_max_overlaps[k]] = True
-
-                # encode bbox for positive matches
-                assigned_bboxes.append(
-                    self._bbox_coder.encode(
-                        anchors_stride[pos_idx],
-                        target_bboxes[i][argmax_overlaps[pos_idx]]))
-                target_idxs.append(argmax_overlaps[pos_idx] + idx_off)
-
-                # store global indices in list
-                pos_idx = flatten_idx(
-                    pos_idx.nonzero(as_tuple=False).squeeze(-1),
-                    j) + i * anchors_cnt
-                neg_idx = flatten_idx(
-                    neg_idx.nonzero(as_tuple=False).squeeze(-1),
-                    j) + i * anchors_cnt
-                pos_idxs.append(pos_idx)
-                neg_idxs.append(neg_idx)
-
-            # compute offset for index computation
-            idx_off += len(target_bboxes[i])
-
-        return (torch.cat(assigned_bboxes,
-                          axis=0), torch.cat(target_idxs, axis=0),
-                torch.cat(pos_idxs, axis=0), torch.cat(neg_idxs, axis=0))
-
-    def get_bboxes(self, cls_scores, bbox_preds, dir_preds):
-        """Get bboxes of anchor head.
-
-        Args:
-            cls_scores (list[torch.Tensor]): Class scores.
-            bbox_preds (list[torch.Tensor]): Bbox predictions.
-            dir_cls_preds (list[torch.Tensor]): Direction
-                class predictions.
-
-        Returns:
-            tuple[torch.Tensor]: Prediction results of batches
-                (bboxes, scores, labels).
-        """
-        bboxes, scores, labels = [], [], []
-        for cls_score, bbox_pred, dir_pred in zip(cls_scores, bbox_preds,
-                                                  dir_preds):
-            b, s, l = self.get_bboxes_single(cls_score, bbox_pred, dir_pred)
-            bboxes.append(b)
-            scores.append(s)
-            labels.append(l)
-        return bboxes, scores, labels
-
-    def get_bboxes_single(self, cls_scores, bbox_preds, dir_preds):
-        """Get bboxes of anchor head.
-
-        Args:
-            cls_scores (list[torch.Tensor]): Class scores.
-            bbox_preds (list[torch.Tensor]): Bbox predictions.
-            dir_cls_preds (list[torch.Tensor]): Direction
-                class predictions.
-
-        Returns:
-            tuple[torch.Tensor]: Prediction results of batches
-                (bboxes, scores, labels).
-        """
-        assert cls_scores.size()[-2:] == bbox_preds.size()[-2:]
-        assert cls_scores.size()[-2:] == dir_preds.size()[-2:]
-
-        anchors = self._anchor_generator.grid_anchors(cls_scores.shape[-2:],
-                                                     device=cls_scores.device)
-        anchors = anchors.reshape(-1, self.box_code_size)
-
-        dir_preds = dir_preds.permute(1, 2, 0).reshape(-1, 2)
-        dir_scores = torch.max(dir_preds, dim=-1)[1]
-
-        cls_scores = cls_scores.permute(1, 2, 0).reshape(-1, self.num_classes)
-        scores = cls_scores.sigmoid()
-
-        bbox_preds = bbox_preds.permute(1, 2, 0).reshape(-1, self.box_code_size)
-
-        if scores.shape[0] > self.nms_pre:
-            max_scores, _ = scores.max(dim=1)
-            _, topk_inds = max_scores.topk(self.nms_pre)
-            anchors = anchors[topk_inds, :]
-            bbox_preds = bbox_preds[topk_inds, :]
-            scores = scores[topk_inds, :]
-            dir_scores = dir_scores[topk_inds]
-
-        bboxes = self._bbox_coder.decode(anchors, bbox_preds)
-
-        idxs = multiclass_nms(bboxes, scores, self.score_thr)
-
-        labels = [
-            torch.full((len(idxs[i]),), i, dtype=torch.long)
-            for i in range(self.num_classes)
-        ]
-        labels = torch.cat(labels)
-
-        scores = [scores[idxs[i], i] for i in range(self.num_classes)]
-        scores = torch.cat(scores)
-
-        idxs = torch.cat(idxs)
-        bboxes = bboxes[idxs]
-        dir_scores = dir_scores[idxs]
-
-        if bboxes.shape[0] > 0:
-            dir_rot = limit_period(bboxes[..., 6] - self.dir_offset, 1, np.pi)
-            bboxes[..., 6] = (dir_rot + self.dir_offset +
-                              np.pi * dir_scores.to(bboxes.dtype))
-
-        return bboxes, scores, labels
+        return cls_preds, box_preds, dir_cls_preds
 
 
 if __name__ == "__main__":
     # 参考 https://github.com/open-mmlab/OpenPCDet/blob/master/tools/cfgs/kitti_models/pointpillar.yaml
     dense_head = PointPillarAnchor3DHead(
         num_classes=3,
-        in_channels=384,
         feat_channels=384,
         nms_pre=100,
         score_thr=0.1,
