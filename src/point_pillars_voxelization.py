@@ -71,24 +71,24 @@ class VoxelGenerator(object):
         return voxels, indices, num_per_voxel, voxel_grids
 
 
-# if __name__ == "__main__":
-#     voxel_generator = VoxelGenerator(
-#         voxel_size=[0.16, 0.16, 4.0],
-#         point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
-#         max_num_points_per_voxel=100,
-#         max_num_voxels=16000
-#     )
-#
-#     import numpy as np
-#     from tools.visualize import plot_3d_cloud_points
-#     with open('./temp/points_velodyne_000008.npy', 'rb') as f1:
-#         points_sample_000008 = np.load(f1)
-#         points_sample_000008 = points_sample_000008[np.where(points_sample_000008[:, 0] > 0)]
-#
-#     # plot_3d_cloud_points(points=points_sample_000008)
-#
-#     voxels, indices, num_per_voxel, voxel_grids = voxel_generator.generate(points=points_sample_000008)
-#     print("voxels.shape = {}".format(voxels.shape))
-#     print("indices.shape = {}".format(indices.shape))
-#     print("num_per_voxel.shape = {}".format(num_per_voxel.shape))
-#     print("voxel_grids = {}".format(voxel_grids))
+if __name__ == "__main__":
+    voxel_generator = VoxelGenerator(
+        voxel_size=[0.16, 0.16, 4.0],
+        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
+        max_num_points_per_voxel=100,
+        max_num_voxels=16000
+    )
+
+    import numpy as np
+    from tools.visualize import plot_3d_cloud_points
+    with open('./temp/points_velodyne_000008.npy', 'rb') as f1:
+        points_sample_000008 = np.load(f1)
+        points_sample_000008 = points_sample_000008[np.where(points_sample_000008[:, 0] > 0)]
+
+    # plot_3d_cloud_points(points=points_sample_000008)
+
+    voxels, indices, num_per_voxel, voxel_grids = voxel_generator.generate(points=points_sample_000008)
+    print("voxels.shape = {}".format(voxels.shape))
+    print("indices.shape = {}".format(indices.shape))
+    print("num_per_voxel.shape = {}".format(num_per_voxel.shape))
+    print("voxel_grids = {}".format(voxel_grids))

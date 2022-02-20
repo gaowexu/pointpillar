@@ -89,6 +89,19 @@ A minimum sampled dataset could be downloaded from `s3://autonomous-driving-perc
 ### Detection Visualization
 
 
+
+### TODO List
+- [x] KITTI data inspection
+- [x] voxelization
+- [x] point pillar net (PFNLayer)
+- [x] Scatter
+- [x] 2D backbone
+- [ ] anchor head single (i.e., anchor generation)
+- [ ] post-processing (NMS)
+- [ ] axis aligned target assigner (for training)
+- [ ] train code
+- [ ] augmentation
+
 ### License
 See the [LICENSE](./LICENSE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
 
