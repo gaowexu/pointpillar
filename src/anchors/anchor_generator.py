@@ -5,11 +5,6 @@ class AnchorGenerator(object):
     def __init__(self, anchor_range, anchor_sizes, anchor_rotations, anchor_heights, align_center):
         super().__init__()
         self.anchor_range = anchor_range
-        # self.anchor_sizes = [config['anchor_sizes'] for config in anchor_generator_config]
-        # self.anchor_rotations = [config['anchor_rotations'] for config in anchor_generator_config]
-        # self.anchor_heights = [config['anchor_bottom_heights'] for config in anchor_generator_config]
-        # self.align_center = [config.get('align_center', False) for config in anchor_generator_config]
-
         self.anchor_sizes = anchor_sizes
         self.anchor_rotations = anchor_rotations
         self.anchor_heights = anchor_heights

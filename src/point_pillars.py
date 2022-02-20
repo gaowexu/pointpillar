@@ -3,7 +3,7 @@ from torch import nn
 from point_pillar_net import PointPillarFeatureNet
 from point_pillars_scatter import PointPillarScatter
 from point_pillars_backbone import PointPillarBackbone
-from point_pillars_anchor_3d_head import PointPillarAnchor3DHead
+from point_pillars_anchor_head_single import PointPillarAnchorHeadSingle
 
 
 class PointPillars(nn.Module):
@@ -45,8 +45,8 @@ class PointPillars(nn.Module):
         # Backbone特征提取器
         self._point_pillars_backbone = PointPillarBackbone()
 
-        # Detection Head
-        self._point_pillars_anchor_3d_head = PointPillarAnchor3DHead()
+        # 检测头
+        self._point_pillars_anchor_3d_head = PointPillarAnchorHeadSingle()
 
     def forward(self, voxels, indices, nums_per_voxel, sample_indices):
         """
@@ -81,72 +81,6 @@ class PointPillars(nn.Module):
         # 步骤五：基于Single Shot Detector (SSD) 对3D物体进行目标检测和回归
         outs = self._point_pillars_anchor_3d_head(backbone_feats)
         return outs
-
-    def loss(self, results, inputs):
-        scores, bboxes, dirs = results
-        gt_labels = inputs.labels
-        gt_bboxes = inputs.bboxes
-
-        # generate and filter bboxes
-        target_bboxes, target_idx, pos_idx, neg_idx = self.bbox_head.assign_bboxes(
-            bboxes, gt_bboxes)
-
-        avg_factor = pos_idx.size(0)
-
-        # classification loss
-        scores = scores.permute(
-            (0, 2, 3, 1)).reshape(-1, self.bbox_head.num_classes)
-        target_labels = torch.full((scores.size(0),),
-                                   self.bbox_head.num_classes,
-                                   device=scores.device,
-                                   dtype=gt_labels[0].dtype)
-        target_labels[pos_idx] = torch.cat(gt_labels, axis=0)[target_idx]
-
-        loss_cls = self.loss_cls(scores[torch.cat([pos_idx, neg_idx], axis=0)],
-                                 target_labels[torch.cat([pos_idx, neg_idx],
-                                                         axis=0)],
-                                 avg_factor=avg_factor)
-
-        # remove invalid labels
-        cond = (target_labels[pos_idx] >= 0) & (target_labels[pos_idx] <
-                                                self.bbox_head.num_classes)
-        pos_idx = pos_idx[cond]
-        target_idx = target_idx[cond]
-        target_bboxes = target_bboxes[cond]
-
-        bboxes = bboxes.permute(
-            (0, 2, 3, 1)).reshape(-1, self.bbox_head.box_code_size)[pos_idx]
-        dirs = dirs.permute((0, 2, 3, 1)).reshape(-1, 2)[pos_idx]
-
-        if len(pos_idx) > 0:
-            # direction classification loss
-            # to discrete bins
-            target_dirs = torch.cat(gt_bboxes, axis=0)[target_idx][:, -1]
-            target_dirs = limit_period(target_dirs, 0, 2 * np.pi)
-            target_dirs = (target_dirs / np.pi).long() % 2
-
-            loss_dir = self.loss_dir(dirs, target_dirs, avg_factor=avg_factor)
-
-            # bbox loss
-            # sinus difference transformation
-            r0 = torch.sin(bboxes[:, -1:]) * torch.cos(target_bboxes[:, -1:])
-            r1 = torch.cos(bboxes[:, -1:]) * torch.sin(target_bboxes[:, -1:])
-
-            bboxes = torch.cat([bboxes[:, :-1], r0], axis=-1)
-            target_bboxes = torch.cat([target_bboxes[:, :-1], r1], axis=-1)
-
-            loss_bbox = self.loss_bbox(bboxes,
-                                       target_bboxes,
-                                       avg_factor=avg_factor)
-        else:
-            loss_bbox = bboxes.sum()
-            loss_dir = dirs.sum()
-
-        return {
-            'loss_cls': loss_cls,
-            'loss_bbox': loss_bbox,
-            'loss_dir': loss_dir
-        }
 
 
 if __name__ == '__main__':

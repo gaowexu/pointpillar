@@ -6,10 +6,10 @@ class Anchor3DRangeGenerator(object):
     根据 feature_map_size 生成 anchors
     """
     def __init__(self,
-                 point_cloud_ranges=[[0, -39.68, -3, 69.12, 39.68, 1]],
+                 point_cloud_range=[[0, -39.68, -3, 69.12, 39.68, 1]],
                  anchor_sizes=[[1.6, 3.9, 1.56]],
                  anchor_rotations=[0, 1.5707963]):
-        assert len(point_cloud_ranges) == len(anchor_sizes)
+        assert len(point_cloud_range) == len(anchor_sizes)
 
         self._anchor_sizes = anchor_sizes
         self._point_cloud_ranges = point_cloud_ranges

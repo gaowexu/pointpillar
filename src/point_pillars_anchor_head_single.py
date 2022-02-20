@@ -2,11 +2,11 @@ import torch
 from torch import nn
 import numpy as np
 from anchors.box_encoder import ResidualCoder
-from anchors.anchor_3d_generator import Anchor3DRangeGenerator
-from objdet_helper import multiclass_nms, limit_period, bbox_overlaps, box3d_to_bev2d
+from anchors.anchor_generator import AnchorGenerator
+from common_utils import limit_period
 
 
-class PointPillarAnchor3DHead(nn.Module):
+class PointPillarAnchorHeadSingle(nn.Module):
     def __init__(self,
                  num_classes=1,
                  feat_channels=384,
@@ -14,24 +14,10 @@ class PointPillarAnchor3DHead(nn.Module):
                  score_thr=0.1,
                  dir_offset=0,
                  encode_angle_by_sin_cos=True,
-                 point_cloud_ranges=[[0, -40.0, -3, 70.0, 40.0, 1]],
+                 point_cloud_range=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
                  anchor_sizes=[[0.6, 1.0, 1.5]],
                  anchor_rotations=[0, 1.57],
                  iou_thresholds=[[0.35, 0.5]]):
-        """
-        构造函数
-
-        :param num_classes:
-        :param feat_channels:
-        :param nms_pre:
-        :param score_thr:
-        :param dir_offset:
-        :param encode_angle_by_sin_cos:
-        :param point_cloud_ranges:
-        :param anchor_sizes:
-        :param anchor_rotations:
-        :param iou_thresholds:
-        """
         super().__init__()
         self._num_classes = num_classes
         self._feat_channels = feat_channels
@@ -39,7 +25,7 @@ class PointPillarAnchor3DHead(nn.Module):
         self._score_thr = score_thr
         self._dir_offset = dir_offset
         self._encode_angle_by_sin_cos = encode_angle_by_sin_cos
-        self._point_cloud_ranges = point_cloud_ranges
+        self._point_cloud_range = point_cloud_range
         self._anchor_sizes = anchor_sizes
         self._anchor_rotations = anchor_rotations
         self._iou_thresholds = iou_thresholds
@@ -50,8 +36,8 @@ class PointPillarAnchor3DHead(nn.Module):
         assert len(self._iou_thresholds) == num_classes
 
         # 创建anchor生成器
-        self._anchor_generator = Anchor3DRangeGenerator(
-            point_cloud_ranges=point_cloud_ranges,
+        self._anchor_generator = AnchorGenerator(
+            point_cloud_ranges=point_cloud_range,
             anchor_sizes=anchor_sizes,
             anchor_rotations=anchor_rotations
         )
@@ -81,6 +67,28 @@ class PointPillarAnchor3DHead(nn.Module):
 
         self.init_weights()
 
+    @property
+    def anchors(self):
+        return self._anchors
+
+
+    @staticmethod
+    def generate_anchors(anchor_generator_cfg, grid_size, point_cloud_range, anchor_ndim=7):
+        anchor_generator = AnchorGenerator(
+            anchor_range=point_cloud_range,
+            anchor_generator_config=anchor_generator_cfg
+        )
+        feature_map_size = [grid_size[:2] // config['feature_map_stride'] for config in anchor_generator_cfg]
+        anchors_list, num_anchors_per_location_list = anchor_generator.generate_anchors(feature_map_size)
+
+        if anchor_ndim != 7:
+            for idx, anchors in enumerate(anchors_list):
+                pad_zeros = anchors.new_zeros([*anchors.shape[0:-1], anchor_ndim - 7])
+                new_anchors = torch.cat((anchors, pad_zeros), dim=-1)
+                anchors_list[idx] = new_anchors
+
+        return anchors_list, num_anchors_per_location_list
+
     def init_weights(self):
         """
         初始化权重参数
@@ -90,6 +98,50 @@ class PointPillarAnchor3DHead(nn.Module):
         pi = 0.01
         nn.init.constant_(self._conv_cls.bias, -np.log((1 - pi) / pi))
         nn.init.normal_(self._conv_box.weight, mean=0.0, std=0.001)
+
+    def generate_predicted_boxes(self, batch_size, cls_preds, box_preds, dir_cls_preds):
+        """
+        Args:
+            batch_size:
+            cls_preds: (N, H, W, C1)
+            box_preds: (N, H, W, C2)
+            dir_cls_preds: (N, H, W, C3)
+
+        Returns:
+            batch_cls_preds: (B, num_boxes, num_classes)
+            batch_box_preds: (B, num_boxes, 7+C)
+
+        """
+        if isinstance(self.anchors, list):
+            if self.use_multihead:
+                anchors = torch.cat([anchor.permute(3, 4, 0, 1, 2, 5).contiguous().view(-1, anchor.shape[-1])
+                                     for anchor in self.anchors], dim=0)
+            else:
+                anchors = torch.cat(self.anchors, dim=-3)
+        else:
+            anchors = self.anchors
+
+        num_anchors = anchors.view(-1, anchors.shape[-1]).shape[0]
+        batch_anchors = anchors.view(1, -1, anchors.shape[-1]).repeat(batch_size, 1, 1)
+        batch_cls_preds = cls_preds.view(batch_size, num_anchors, -1).float() \
+            if not isinstance(cls_preds, list) else cls_preds
+        batch_box_preds = box_preds.view(batch_size, num_anchors, -1) if not isinstance(box_preds, list) \
+            else torch.cat(box_preds, dim=1).view(batch_size, num_anchors, -1)
+        batch_box_preds = self.box_coder.decode_torch(batch_box_preds, batch_anchors)
+
+        dir_offset = self.model_cfg.DIR_OFFSET
+        dir_limit_offset = self.model_cfg.DIR_LIMIT_OFFSET
+        dir_cls_preds = dir_cls_preds.view(batch_size, num_anchors, -1) if not isinstance(dir_cls_preds, list) \
+            else torch.cat(dir_cls_preds, dim=1).view(batch_size, num_anchors, -1)
+        dir_labels = torch.max(dir_cls_preds, dim=-1)[1]
+
+        period = (2 * np.pi / self.model_cfg.NUM_DIR_BINS)
+        dir_rot = limit_period(
+            batch_box_preds[..., 6] - dir_offset, dir_limit_offset, period
+        )
+        batch_box_preds[..., 6] = dir_rot + dir_offset + period * dir_labels.to(batch_box_preds.dtype)
+
+        return batch_cls_preds, batch_box_preds
 
     def forward(self, x):
         """
@@ -118,33 +170,32 @@ class PointPillarAnchor3DHead(nn.Module):
         box_preds = box_preds.permute(0, 2, 3, 1).contiguous()
         dir_cls_preds = dir_cls_preds.permute(0, 2, 3, 1).contiguous()
 
+
+
         return cls_preds, box_preds, dir_cls_preds
 
 
 if __name__ == "__main__":
     # 参考 https://github.com/open-mmlab/OpenPCDet/blob/master/tools/cfgs/kitti_models/pointpillar.yaml
-    dense_head = PointPillarAnchor3DHead(
+    dense_head = PointPillarAnchorHeadSingle(
         num_classes=3,
         feat_channels=384,
         nms_pre=100,
         score_thr=0.1,
         dir_offset=0,
-        point_cloud_ranges=[
-            [0, -39.68, -1.78, 69.12, 39.68, -1.78],        # 车辆的点云范围
-            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 行人的点云范围
-            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 自行车的点云范围
-        ],
+        point_cloud_ranges=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
+        anchor_rotations=[[0, 1.5707963], [0, 1.5707963], [0, 1.5707963]],
         anchor_sizes=[
-            [1.6, 3.9, 1.56],       # 车辆的anchor尺寸, w, l, h
-            [0.6, 0.8, 1.73],       # 行人的anchor尺寸, w, l, h
-            [0.6, 1.76, 1.73]       # 自行车的anchor尺寸, w, l, h
+            [3.9, 1.6, 1.56],  # Car 类别的anchor尺寸, dx, dy, dz
+            [0.8, 0.6, 1.73],  # Pedestrian 类别的anchor尺寸, dx, dy, dz
+            [1.76, 0.6, 1.73]  # Cyclist 类别的anchor尺寸, dx, dy, dz
         ],
-        anchor_rotations=[0, 1.57],
-        iou_thresholds=[
-            [0.45, 0.60],
-            [0.35, 0.50],
-            [0.35, 0.50],
-        ]
+        anchor_bottom_heights=[
+            [-1.78],  # Car 类别的 z_offset
+            [-0.6],  # Pedestrian 类别的 z_offset
+            [-0.6]  # Cyclist 类别的 z_offset
+        ],
+        align_center=True
     )
 
     print(dense_head)
