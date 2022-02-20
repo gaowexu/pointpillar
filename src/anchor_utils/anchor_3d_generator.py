@@ -53,7 +53,6 @@ class Anchor3DRangeGenerator(object):
             print("\n")
 
         mr_anchors = torch.cat(mr_anchors, dim=-3)
-        print("mr_anchors.shape = {}".format(mr_anchors.shape))
         return mr_anchors
 
     @staticmethod
@@ -104,9 +103,6 @@ class Anchor3DRangeGenerator(object):
         tile_shape = [1] * 5
         tile_shape[-2] = int(anchor_sizes.shape[0])
 
-        # for item in rets:
-        #     print(item.shape)
-
         for i in range(len(rets)):
             rets[i] = rets[i].unsqueeze(-2).repeat(tile_shape).unsqueeze(-1)
 
@@ -117,34 +113,33 @@ class Anchor3DRangeGenerator(object):
         anchor_sizes = anchor_sizes.repeat(tile_size_shape)
         rets.insert(3, anchor_sizes)
 
-        ret = torch.cat(rets, dim=-1).permute([2, 1, 0, 3, 4, 5])
-        print("ret.shape = {}".format(ret.shape))
+        # 执行完下一步后输出维度为 (432, 496, 1, len(self._anchor_sizes), len(self._anchor_rotations), 7),
+        # 其中432, 496, 1 分别表示 输出的 anchor 在原始激光雷达坐标系上 x,y,z上的box_code, 即为 x, y, z, w, l, h, yaw.
+        # 需要注意的是 w, l 分别对应三维物体的宽度和长度，对应着激光雷达坐标系上的 y, x, 在特征图上也对应着 y, x （而不是 x, y）
+        # 关于 rets 输出举例说明：
+        # rets[0][0][0][0][0] = [0.0000, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   0.0000]
+        # rets[0][0][0][1][0] = [0.0000, -39.6800,  -0.6000,   0.6000,   0.8000,   1.7300,   0.0000]
+        # rets[0][0][0][2][0] = [0.0000, -39.6800,  -0.6000,   0.6000,   1.7600,   1.7300,   0.0000]
+        # rets[0][0][0][0][1] = [0.0000, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   1.5708]
+        # rets[1][0][0][0][1] = [0.1604, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   1.5708]
+        # rets[-1][0][0][0][1] = [69.1200, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   1.5708]
+        # rets[-1][-1][0][0][1] = [69.1200, 39.6800, -0.6000,  1.6000,  3.9000,  1.5600,  1.5708]
+        rets = torch.cat(rets, dim=-1)
 
-        # [1, 200, 176, N, 2, 7] for kitti after permute
-        # print(point_cloud_range)
-        # print(ret[0][0][0][0][0])
-        # print(ret[0][0][0][0][1])
-
-        # print(ret[0][0][0][1][0])
-        # print(ret[0][0][0][1][1])
-        #
-        # print(ret[0][0][0][2][0])
-        # print(ret[0][0][0][2][1])
-
-        return ret
+        return rets
 
 
 if __name__ == "__main__":
     anchor_3d_range_generator = Anchor3DRangeGenerator(
         point_cloud_range=[
-            [0, -39.68, -3, 69.12, 39.68, 1.0],     # 车辆的anchor尺寸
-            [0, -20, -2.5, 48.0, 20.0, 0.5],     # 行人的anchor尺寸
-            [0, -20, -2.5, 48.0, 20.0, 0.5],     # 自行车的anchor尺寸
+            [0, -39.68, -1.78, 69.12, 39.68, -1.78],        # 车辆的点云范围
+            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 行人的点云范围
+            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 自行车的点云范围
         ],
         anchor_sizes=[
-            [1.6, 3.9, 1.56],   # 车辆的anchor尺寸
-            [0.6, 0.8, 1.73],   # 行人的anchor尺寸
-            [0.6, 1.76, 1.73]    # 自行车的anchor尺寸
+            [1.6, 3.9, 1.56],       # 车辆的anchor尺寸
+            [0.6, 0.8, 1.73],       # 行人的anchor尺寸
+            [0.6, 1.76, 1.73]       # 自行车的anchor尺寸
         ],
         anchor_rotations=[0, 1.5707963]
     )
