@@ -131,19 +131,21 @@ class Anchor3DRangeGenerator(object):
 
 if __name__ == "__main__":
     anchor_3d_range_generator = Anchor3DRangeGenerator(
-        point_cloud_ranges=[
-            [0, -39.68, -1.78, 69.12, 39.68, -1.78],        # 车辆的点云范围
-            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 行人的点云范围
-            [0, -39.68, -0.6, 69.12, 39.68, 0.6],           # 自行车的点云范围
-        ],
+        point_cloud_ranges=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
+        anchor_rotations=[[0, 1.5707963], [0, 1.5707963], [0, 1.5707963]],
         anchor_sizes=[
-            [1.6, 3.9, 1.56],       # 车辆的anchor尺寸
-            [0.6, 0.8, 1.73],       # 行人的anchor尺寸
-            [0.6, 1.76, 1.73]       # 自行车的anchor尺寸
+            [3.9, 1.6, 1.56],  # Car 类别的anchor尺寸, dx, dy, dz
+            [0.8, 0.6, 1.73],  # Pedestrian 类别的anchor尺寸, dx, dy, dz
+            [1.76, 0.6, 1.73]  # Cyclist 类别的anchor尺寸, dx, dy, dz
         ],
-        anchor_rotations=[0, 1.5707963]
+        anchor_bottom_heights=[
+            [-1.78],    # Car 类别的 z_offset
+            [-0.6],     # Pedestrian 类别的 z_offset
+            [-0.6]      # Cyclist 类别的 z_offset
+        ],
+        align_center=True
     )
 
     print(anchor_3d_range_generator.num_anchors_per_location)
 
-    anchor_3d_range_generator.grid_anchors(feature_map_size=(432, 496))
+    anchor_3d_range_generator.grid_anchors(feature_map_size=(432//2, 496//2))
