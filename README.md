@@ -97,8 +97,8 @@ A minimum sampled dataset could be downloaded from `s3://autonomous-driving-perc
 - [x] Scatter
 - [x] 2D backbone
 - [ ] anchor head single (i.e., anchor generation)
-- [ ] post-processing (NMS)
 - [ ] axis aligned target assigner (for training)
+- [ ] post-processing (NMS)
 - [ ] loss function
 - [ ] train code
 - [ ] augmentation
