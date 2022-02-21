@@ -6,14 +6,17 @@ class Anchor3DRangeGenerator(object):
     根据 feature_map_size 生成 anchors
     """
     def __init__(self,
-                 point_cloud_range=[[0, -39.68, -3, 69.12, 39.68, 1]],
-                 anchor_sizes=[[1.6, 3.9, 1.56]],
-                 anchor_rotations=[0, 1.5707963]):
-        assert len(point_cloud_range) == len(anchor_sizes)
+                 point_cloud_range,
+                 anchor_rotations,
+                 anchor_sizes,
+                 anchor_bottom_heights,
+                 align_center=True):
 
-        self._anchor_sizes = anchor_sizes
-        self._point_cloud_ranges = point_cloud_ranges
+        self._point_cloud_range = point_cloud_range
         self._anchor_rotations = anchor_rotations
+        self._anchor_sizes = anchor_sizes
+        self._anchor_bottom_heights = anchor_bottom_heights
+        self._align_center = align_center
 
     @property
     def num_anchors_per_location(self):
@@ -106,7 +109,6 @@ class Anchor3DRangeGenerator(object):
         for i in range(len(rets)):
             rets[i] = rets[i].unsqueeze(-2).repeat(tile_shape).unsqueeze(-1)
 
-
         anchor_sizes = anchor_sizes.reshape([1, 1, 1, -1, 1, 3])
         tile_size_shape = list(rets[0].shape)
         tile_size_shape[3] = 1
@@ -131,7 +133,7 @@ class Anchor3DRangeGenerator(object):
 
 if __name__ == "__main__":
     anchor_3d_range_generator = Anchor3DRangeGenerator(
-        point_cloud_ranges=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
+        point_cloud_range=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
         anchor_rotations=[[0, 1.5707963], [0, 1.5707963], [0, 1.5707963]],
         anchor_sizes=[
             [3.9, 1.6, 1.56],  # Car 类别的anchor尺寸, dx, dy, dz

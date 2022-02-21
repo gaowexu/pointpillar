@@ -11,11 +11,12 @@ class AnchorGenerator(object):
                                  [[3.9, 1.6, 1.56], [5.2, 1.6, 1.56]],
                                  [[0.8, 0.6, 1.73]],
                                  [[1.76, 0.6, 1.73]]
-                              ]，类型为一个数组，数组类没一个元素仍为一个尺寸数组，尺寸数组内是三元素数组，三元素的顺序分别为
+                              ]，类型为一个数组，数组内每一个元素仍为一个尺寸数组，尺寸数组内是三元素数组，三元素的顺序分别为
                               dx, dy, dz.
-        :param anchor_rotations:
-        :param anchor_heights:
-        :param align_center:
+        :param anchor_rotations: 默认锚框的角度，举例如下：[[0, 0.45, 0.90, 1.57], [0, 1.57], [0, 1.57]], 类型为一个数组，
+                                 数组内没一个元素仍为一个数组，表示对应的锚框的旋转角度
+        :param anchor_heights: 锚框高度
+        :param align_center: 是否align center
         """
         super().__init__()
         self.anchor_range = anchor_range
@@ -28,7 +29,7 @@ class AnchorGenerator(object):
         print(len(self.anchor_rotations))
         print(len(self.anchor_heights))
 
-        assert len(self.anchor_sizes) == len(self.anchor_rotations) == len(self.anchor_heights)
+        assert len(self.anchor_sizes) == len(self.anchor_rotations) == len(self.anchor_heights) == len(self.align_center)
         self.num_of_anchor_sets = len(self.anchor_sizes)
 
     def generate_anchors(self, grid_sizes):
