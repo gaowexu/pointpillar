@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 from anchors.box_encoder import ResidualCoder
-from anchors.anchor_generator import AnchorGenerator
+from anchors.anchor_3d_generator import Anchor3DRangeGenerator
 from common_utils import limit_period
 
 
@@ -36,7 +36,7 @@ class PointPillarAnchorHeadSingle(nn.Module):
         assert len(self._iou_thresholds) == num_classes
 
         # 创建anchor生成器
-        self._anchor_generator = AnchorGenerator(
+        self._anchor_generator = Anchor3DRangeGenerator(
             point_cloud_ranges=point_cloud_range,
             anchor_sizes=anchor_sizes,
             anchor_rotations=anchor_rotations

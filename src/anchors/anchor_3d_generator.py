@@ -7,147 +7,138 @@ class Anchor3DRangeGenerator(object):
     """
     def __init__(self,
                  point_cloud_range,
-                 anchor_rotations,
-                 anchor_sizes,
-                 anchor_bottom_heights,
-                 align_center=True):
-
-        self._point_cloud_range = point_cloud_range
-        self._anchor_rotations = anchor_rotations
-        self._anchor_sizes = anchor_sizes
-        self._anchor_bottom_heights = anchor_bottom_heights
-        self._align_center = align_center
-
-    @property
-    def num_anchors_per_location(self):
+                 anchor_generation_config):
         """
-        计算 feature grid map中每一个“像素”位置所有的 anchor_utils 数量
+        构造函数
+
+        :param point_cloud_range: 点云考虑的范围，也是锚框生成时考虑的点云范围，[x_min, y_min, z_min, x_max, y_max, z_max]
+        :param anchor_generation_config: 锚框生成配置
+        """
+        self._point_cloud_range = point_cloud_range
+        self._anchor_generation_config = anchor_generation_config
+
+        self._anchor_sizes = [config['anchor_sizes'] for config in anchor_generation_config]
+        self._anchor_rotations = [config['anchor_rotations'] for config in anchor_generation_config]
+        self._anchor_bottom_heights = [config['anchor_bottom_heights'] for config in anchor_generation_config]
+        self._align_center = [config.get('align_center', False) for config in anchor_generation_config]
+
+    def generate_anchors(self, grid_sizes):
+        """
+
+        :param grid_sizes:
         :return:
         """
-        num_rot = len(self._anchor_rotations)
-        num_size = torch.tensor(self._anchor_sizes).reshape(-1, 3).size(0)
-        return num_rot * num_size
+        assert len(grid_sizes) == len(self._anchor_sizes)
+        all_anchors = list()
+        num_anchors_per_location = list()
 
-    def grid_anchors(self, feature_map_size, device='cuda'):
-        """Generate grid anchors of a single level feature map.
+        for grid_size, anchor_size, anchor_rotation, anchor_bottom_height, align_center in zip(
+                grid_sizes, self._anchor_sizes, self._anchor_rotations,
+                self._anchor_bottom_heights, self._align_center):
+            num_anchors_per_location.append(len(anchor_size) * len(anchor_rotation) * len(anchor_bottom_height))
 
-        This function is usually called by method ``self.grid_anchors``.
+            if align_center:
+                x_stride = (self._point_cloud_range[3] - self._point_cloud_range[0]) / grid_size[0]
+                y_stride = (self._point_cloud_range[4] - self._point_cloud_range[1]) / grid_size[1]
+                x_offset, y_offset = x_stride / 2, y_stride / 2
+            else:
+                x_stride = (self._point_cloud_range[3] - self._point_cloud_range[0]) / (grid_size[0] - 1)
+                y_stride = (self._point_cloud_range[4] - self._point_cloud_range[1]) / (grid_size[1] - 1)
+                x_offset, y_offset = 0, 0
 
-        Args:
-            feature_map_size (tuple[int]): Size of the feature map.
-            device (str, optional): Device the tensor will be put on.
-                Defaults to 'cuda'.
+            x_shifts = torch.arange(
+                start=self._point_cloud_range[0] + x_offset,
+                end=self._point_cloud_range[3] + 1e-5,
+                step=x_stride,
+                dtype=torch.float32,
+            ).cuda()
 
-        Returns:
-            torch.Tensor: Anchors in the overall feature map.
-        """
-        mr_anchors = list()
-        for pc_range, anchor_size in zip(self._point_cloud_ranges, self._anchor_sizes):
-            mr_anchors.append(
-                self.anchors_single_range(
-                    feature_map_size=feature_map_size,
-                    point_cloud_range=pc_range,
-                    anchor_sizes=self._anchor_sizes,
-                    rotations=self._anchor_rotations,
-                    device=device
-                )
-            )
+            y_shifts = torch.arange(
+                start=self._point_cloud_range[1] + y_offset,
+                end=self._point_cloud_range[4] + 1e-5,
+                step=y_stride,
+                dtype=torch.float32,
+            ).cuda()
 
-            print("\n")
+            z_shifts = torch.tensor(anchor_bottom_height, device="cuda")
+            num_anchor_size, num_anchor_rotation = len(anchor_size), len(anchor_rotation)
 
-        mr_anchors = torch.cat(mr_anchors, dim=-3)
-        return mr_anchors
+            anchor_rotation = torch.tensor(anchor_rotation).cuda()
+            anchor_size = torch.tensor(anchor_size).cuda()
+            x_shifts, y_shifts, z_shifts = torch.meshgrid([x_shifts, y_shifts, z_shifts])
 
-    @staticmethod
-    def anchors_single_range(feature_map_size, point_cloud_range, anchor_sizes, rotations, device='cuda'):
-        """
+            anchors = torch.stack((x_shifts, y_shifts, z_shifts), dim=-1)
 
-        :param feature_map_size: 特征图大小，为一个数组，默认为 [nx/2, ny/2], 如果是二维，需要转化为三维，即转化为
-                                 [1, nx/2, ny/2]，如果传进来的是三维，则代表 [D, H, W] (顺序为激光雷达的 z轴，x 轴， y 轴)
-        :param point_cloud_range: 点云范围，[x_min, y_min, z_min, x_max, y_max, z_max]
-        :param anchor_sizes: 默认 anchor 的大小，形状为 （N, 3）, 3代表 x, y, z 方向上的尺寸
-        :param rotations: anchor 的旋转角度
-        :param device: anchors 输出的设备，cpu 或 cuda
+            anchors = anchors[:, :, :, None, :].repeat(1, 1, 1, anchor_size.shape[0], 1)
+            anchor_size = anchor_size.view(1, 1, 1, -1, 3).repeat([*anchors.shape[0:3], 1, 1])
+            anchors = torch.cat((anchors, anchor_size), dim=-1)
 
-        :return: 返回 anchors 集合，其维度为 (D, H, W, len(self._anchor_sizes), len(self._anchor_rotations), 7), 其中
-                 D表示在z轴上的分辨率， H = nx/2, W = ny/2, 7 表示anchor参数，即 x, y, z, w, l, h, yaw. 在 PointPillar
-                 算法中返回的大小为  (1, 432, 496, len(self._anchor_sizes), len(self._anchor_rotations), 7)
-        """
-        if len(feature_map_size) == 2:
-            feature_map_size = [1, feature_map_size[0], feature_map_size[1]]
+            anchors = anchors[:, :, :, :, None, :].repeat(1, 1, 1, 1, num_anchor_rotation, 1)
+            anchor_rotation = anchor_rotation.view(1, 1, 1, 1, -1, 1).repeat([*anchors.shape[0:3], num_anchor_size, 1, 1])
+            anchors = torch.cat((anchors, anchor_rotation), dim=-1)
 
-        point_cloud_range = torch.tensor(point_cloud_range, device=device)
+            # anchors 维度 为 [nx/2, ny/2, nz, len(anchor_size), len(anchor_rotations), 7], 最后一个维度7代表着
+            # x, y, z, dx, dy, dz, yaw, 执行完下一步permute(2, 1, 0, 3, 4, 5)后维度变成 [nz, ny/2, nx/2, len(anchor_size),
+            # len(anchor_rotations), 7]
+            anchors = anchors.permute(2, 1, 0, 3, 4, 5).contiguous()
 
-        x_centers = torch.linspace(
-            start=point_cloud_range[0],
-            end=point_cloud_range[3],
-            steps=feature_map_size[1],
-            device=device)
+            # 将锚框向上提升至预先设定的中心高度, 即在 anchor_bottom_height 的基础上加上 anchor的dz值的一半
+            anchors[..., 2] += anchors[..., 5] / 2
 
-        y_centers = torch.linspace(
-            start=point_cloud_range[1],
-            end=point_cloud_range[4],
-            steps=feature_map_size[2],
-            device=device)
+            all_anchors.append(anchors)
 
-        z_centers = torch.linspace(
-            start=point_cloud_range[2],
-            end=point_cloud_range[5],
-            steps=feature_map_size[0],
-            device=device)
-
-        anchor_sizes = torch.tensor(anchor_sizes, device=device).reshape(-1, 3)
-        rotations = torch.tensor(rotations, device=device)
-
-        # torch.meshgrid default behavior is 'id', np's default is 'xy'
-        rets = torch.meshgrid(x_centers, y_centers, z_centers, rotations)
-        # torch.meshgrid returns a tuple rather than list
-        rets = list(rets)
-        tile_shape = [1] * 5
-        tile_shape[-2] = int(anchor_sizes.shape[0])
-
-        for i in range(len(rets)):
-            rets[i] = rets[i].unsqueeze(-2).repeat(tile_shape).unsqueeze(-1)
-
-        anchor_sizes = anchor_sizes.reshape([1, 1, 1, -1, 1, 3])
-        tile_size_shape = list(rets[0].shape)
-        tile_size_shape[3] = 1
-        anchor_sizes = anchor_sizes.repeat(tile_size_shape)
-        rets.insert(3, anchor_sizes)
-
-        # 执行完下一步后输出维度为 (432, 496, 1, len(self._anchor_sizes), len(self._anchor_rotations), 7),
-        # 其中432, 496, 1 分别表示 输出的 anchor 在原始激光雷达坐标系上 x,y,z上的box_code, 即为 x, y, z, w, l, h, yaw.
-        # 需要注意的是 w, l 分别对应三维物体的宽度和长度，对应着激光雷达坐标系上的 y, x, 在特征图上也对应着 y, x （而不是 x, y）
-        # 关于 rets 输出举例说明：
-        # rets[0][0][0][0][0] = [0.0000, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   0.0000]
-        # rets[0][0][0][1][0] = [0.0000, -39.6800,  -0.6000,   0.6000,   0.8000,   1.7300,   0.0000]
-        # rets[0][0][0][2][0] = [0.0000, -39.6800,  -0.6000,   0.6000,   1.7600,   1.7300,   0.0000]
-        # rets[0][0][0][0][1] = [0.0000, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   1.5708]
-        # rets[1][0][0][0][1] = [0.1604, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   1.5708]
-        # rets[-1][0][0][0][1] = [69.1200, -39.6800,  -0.6000,   1.6000,   3.9000,   1.5600,   1.5708]
-        # rets[-1][-1][0][0][1] = [69.1200, 39.6800, -0.6000,  1.6000,  3.9000,  1.5600,  1.5708]
-        rets = torch.cat(rets, dim=-1)
-
-        return rets
+        return all_anchors, num_anchors_per_location
 
 
 if __name__ == "__main__":
     anchor_3d_range_generator = Anchor3DRangeGenerator(
         point_cloud_range=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
-        anchor_rotations=[[0, 1.5707963], [0, 1.5707963], [0, 1.5707963]],
-        anchor_sizes=[
-            [3.9, 1.6, 1.56],  # Car 类别的anchor尺寸, dx, dy, dz
-            [0.8, 0.6, 1.73],  # Pedestrian 类别的anchor尺寸, dx, dy, dz
-            [1.76, 0.6, 1.73]  # Cyclist 类别的anchor尺寸, dx, dy, dz
-        ],
-        anchor_bottom_heights=[
-            [-1.78],    # Car 类别的 z_offset
-            [-0.6],     # Pedestrian 类别的 z_offset
-            [-0.6]      # Cyclist 类别的 z_offset
-        ],
-        align_center=True
+        anchor_generation_config=[
+            {
+                'class_name': 'Car',
+                'anchor_sizes': [[3.9, 1.6, 1.56]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-1.78],
+                'align_center': False,
+                'feature_map_stride': 2,
+                'matched_threshold': 0.6,
+                'unmatched_threshold': 0.45
+            },
+            {
+                'class_name': 'Pedestrian',
+                'anchor_sizes': [[0.8, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 2,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            },
+            {
+                'class_name': 'Cyclist',
+                'anchor_sizes': [[1.76, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 2,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            }
+        ]
     )
 
-    print(anchor_3d_range_generator.num_anchors_per_location)
+    all_anchors_out, num_anchors_per_location_out = anchor_3d_range_generator.generate_anchors(
+        grid_sizes=[[216, 248], [216, 248], [216, 248]]
+    )
 
-    anchor_3d_range_generator.grid_anchors(feature_map_size=(432//2, 496//2))
+    for anchors in all_anchors_out:
+        print("anchors.shape = {}".format(anchors.shape))
+
+        print("anchors[0][0][0][0][0] = {}".format(anchors[0][0][0][0][0]))
+        print("anchors[0][-1][0][0][0] = {}".format(anchors[0][-1][0][0][0]))
+        print("anchors[0][-1][-1][0][0] = {}".format(anchors[0][-1][-1][0][0]))
+        print("anchors[0][-1][-1][0][1] = {}".format(anchors[0][-1][-1][0][1]))
+
+        print("\n")
+
+    print(num_anchors_per_location_out)
