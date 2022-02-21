@@ -99,6 +99,7 @@ A minimum sampled dataset could be downloaded from `s3://autonomous-driving-perc
 - [ ] anchor head single (i.e., anchor generation)
 - [ ] post-processing (NMS)
 - [ ] axis aligned target assigner (for training)
+- [ ] loss function
 - [ ] train code
 - [ ] augmentation
 

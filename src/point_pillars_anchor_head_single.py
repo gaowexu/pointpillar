@@ -53,17 +53,17 @@ class PointPillarAnchorHeadSingle(nn.Module):
         self._conv_cls = nn.Conv2d(
             in_channels=self._feat_channels,
             out_channels=self._num_anchors_per_location * self._num_classes,
-            kernel_size=1)
+            kernel_size=(1, 1))
 
         self._conv_box = nn.Conv2d(
             in_channels=self._feat_channels,
             out_channels=self._num_anchors_per_location * self._box_code_size,
-            kernel_size=1)
+            kernel_size=(1, 1))
 
         self._conv_dir_cls = nn.Conv2d(
             in_channels=self._feat_channels,
             out_channels=self._num_anchors_per_location * len(self._anchor_rotations),
-            kernel_size=1)
+            kernel_size=(1, 1))
 
         self.init_weights()
 
@@ -169,8 +169,6 @@ class PointPillarAnchorHeadSingle(nn.Module):
         cls_preds = cls_preds.permute(0, 2, 3, 1).contiguous()
         box_preds = box_preds.permute(0, 2, 3, 1).contiguous()
         dir_cls_preds = dir_cls_preds.permute(0, 2, 3, 1).contiguous()
-
-
 
         return cls_preds, box_preds, dir_cls_preds
 

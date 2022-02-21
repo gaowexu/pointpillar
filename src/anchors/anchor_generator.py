@@ -3,6 +3,20 @@ import torch
 
 class AnchorGenerator(object):
     def __init__(self, anchor_range, anchor_sizes, anchor_rotations, anchor_heights, align_center):
+        """
+        构造函数
+
+        :param anchor_range: 生成anchor的激光点云的范围，[x_min, y_min, z_min, x_max, y_max, z_max]
+        :param anchor_sizes: 默认anchor的尺寸，举例为 [
+                                 [[3.9, 1.6, 1.56], [5.2, 1.6, 1.56]],
+                                 [[0.8, 0.6, 1.73]],
+                                 [[1.76, 0.6, 1.73]]
+                              ]，类型为一个数组，数组类没一个元素仍为一个尺寸数组，尺寸数组内是三元素数组，三元素的顺序分别为
+                              dx, dy, dz.
+        :param anchor_rotations:
+        :param anchor_heights:
+        :param align_center:
+        """
         super().__init__()
         self.anchor_range = anchor_range
         self.anchor_sizes = anchor_sizes
@@ -65,20 +79,10 @@ class AnchorGenerator(object):
 
 
 if __name__ == '__main__':
-    from easydict import EasyDict
-    config = [
-        EasyDict({
-            'anchor_sizes': [[[3.9, 1.6, 1.56]], [[0.8, 0.6, 1.73]], [[1.76, 0.6, 1.73]]],
-            'anchor_rotations': [[0, 1.57], [0, 1.57], [0, 1.57]],
-            'anchor_bottom_heights': [[-1.78], [-0.6], [-0.6]],
-            "align_center": [False, False, False]
-        })
-    ]
-
     A = AnchorGenerator(
         anchor_range=[-75.2, -75.2, -2, 75.2, 75.2, 4],
-        anchor_sizes=[[[3.9, 1.6, 1.56]], [[0.8, 0.6, 1.73]], [[1.76, 0.6, 1.73]]],
-        anchor_rotations=[[0, 1.57], [0, 1.57], [0, 1.57]],
+        anchor_sizes=[[[3.9, 1.6, 1.56], [5.2, 1.6, 1.56]], [[0.8, 0.6, 1.73]], [[1.76, 0.6, 1.73]]],
+        anchor_rotations=[[0, 0.45, 0.90, 1.57], [0, 1.57], [0, 1.57]],
         anchor_heights=[[-1.78], [-0.6], [-0.6]],
         align_center=[False, False, False]
     )
