@@ -31,8 +31,8 @@ class ResidualCoder(object):
         anchors[:, 3:6] = torch.clamp_min(anchors[:, 3:6], min=1e-5)
         boxes[:, 3:6] = torch.clamp_min(boxes[:, 3:6], min=1e-5)
 
-        xa, ya, za, dxa, dya, dza, ra = torch.split(anchors, 1, dim=-1)
-        xg, yg, zg, dxg, dyg, dzg, rg = torch.split(boxes, 1, dim=-1)
+        xa, ya, za, dxa, dya, dza, ra, *cas = torch.split(anchors, 1, dim=-1)
+        xg, yg, zg, dxg, dyg, dzg, rg, *cgs = torch.split(boxes, 1, dim=-1)
 
         diagonal = torch.sqrt(dxa ** 2 + dya ** 2)
         xt = (xg - xa) / diagonal
@@ -49,21 +49,23 @@ class ResidualCoder(object):
         else:
             rts = [rg - ra]
 
-        return torch.cat([xt, yt, zt, dxt, dyt, dzt, *rts], dim=-1)
+        cts = [g - a for g, a in zip(cgs, cas)]
+        return torch.cat([xt, yt, zt, dxt, dyt, dzt, *rts, *cts], dim=-1)
 
     def decode(self, anchors, deltas):
         """
         基于anchors对预测的残差（residuals）进行解码
 
-        :param anchors: 默认三维矩形锚框, torch.Tensor, 形状为 (N, 7)
-        :param deltas: torch.Tensor， 形状为 (N, 7) 或 (N, 9)
+        :param anchors: 默认三维矩形锚框, torch.Tensor, 形状为 (batch_size, N, 7+C), 7+C表示
+                        [x, y, z, dx, dy, dz, heading or *[cos, sin], ...]
+        :param deltas: torch.Tensor， 形状为 (batch_size, N, 7+C)
         :return:
         """
-        xa, ya, za, dxa, dya, dza, ra = torch.split(anchors, 1, dim=-1)
+        xa, ya, za, dxa, dya, dza, ra, *cas = torch.split(anchors, 1, dim=-1)
         if not self._encode_angle_by_sin_cos:
-            xt, yt, zt, dxt, dyt, dzt, rt = torch.split(deltas, 1, dim=-1)
+            xt, yt, zt, dxt, dyt, dzt, rt, *cts = torch.split(deltas, 1, dim=-1)
         else:
-            xt, yt, zt, dxt, dyt, dzt, cost, sint = torch.split(deltas, 1, dim=-1)
+            xt, yt, zt, dxt, dyt, dzt, cost, sint, *cts = torch.split(deltas, 1, dim=-1)
 
         diagonal = torch.sqrt(dxa ** 2 + dya ** 2)
         xg = xt * diagonal + xa
@@ -81,7 +83,8 @@ class ResidualCoder(object):
             rg_sin = sint + torch.sin(ra)
             rg = torch.atan2(rg_sin, rg_cos)
 
-        return torch.cat([xg, yg, zg, dxg, dyg, dzg, rg], dim=-1)
+        cgs = [t + a for t, a in zip(cts, cas)]
+        return torch.cat([xg, yg, zg, dxg, dyg, dzg, rg, *cgs], dim=-1)
 
 
 if __name__ == "__main__":
