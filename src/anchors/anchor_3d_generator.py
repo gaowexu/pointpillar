@@ -24,8 +24,9 @@ class Anchor3DRangeGenerator(object):
 
     def generate_anchors(self, grid_sizes):
         """
+        生成 anchors
 
-        :param grid_sizes:
+        :param grid_sizes: 默认的不同类别的特征图维度，例如： [[216, 248], [216, 248], [216, 248]]
         :return:
         """
         assert len(grid_sizes) == len(self._anchor_sizes)
@@ -134,11 +135,11 @@ if __name__ == "__main__":
     for anchors in all_anchors_out:
         print("anchors.shape = {}".format(anchors.shape))
 
-        print("anchors[0][0][0][0][0] = {}".format(anchors[0][0][0][0][0]))
-        print("anchors[0][-1][0][0][0] = {}".format(anchors[0][-1][0][0][0]))
-        print("anchors[0][-1][-1][0][0] = {}".format(anchors[0][-1][-1][0][0]))
-        print("anchors[0][-1][-1][0][1] = {}".format(anchors[0][-1][-1][0][1]))
+        # print("anchors[0][0][0][0][0] = {}".format(anchors[0][0][0][0][0]))
+        # print("anchors[0][-1][0][0][0] = {}".format(anchors[0][-1][0][0][0]))
+        # print("anchors[0][-1][-1][0][0] = {}".format(anchors[0][-1][-1][0][0]))
+        # print("anchors[0][-1][-1][0][1] = {}".format(anchors[0][-1][-1][0][1]))
 
-        print("\n")
+        # print("\n")
 
     print(num_anchors_per_location_out)

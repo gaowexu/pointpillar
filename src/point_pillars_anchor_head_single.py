@@ -8,81 +8,81 @@ from common_utils import limit_period
 
 class PointPillarAnchorHeadSingle(nn.Module):
     def __init__(self,
-                 num_classes=1,
-                 feat_channels=384,
-                 nms_pre=100,
-                 score_thr=0.1,
-                 dir_offset=0,
-                 encode_angle_by_sin_cos=True,
-                 point_cloud_range=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
-                 anchor_sizes=[[0.6, 1.0, 1.5]],
-                 anchor_rotations=[0, 1.57],
-                 iou_thresholds=[[0.35, 0.5]]):
+                 input_channels,
+                 point_cloud_range,
+                 voxel_size,
+                 num_dir_bins,
+                 anchor_generation_config
+                 ):
+        """
+
+        :param input_channels:
+        :param point_cloud_range:
+        :param voxel_size:
+        :param num_dir_bins:
+        :param anchor_generation_config:
+        """
         super().__init__()
-        self._num_classes = num_classes
-        self._feat_channels = feat_channels
-        self._nms_pre = nms_pre
-        self._score_thr = score_thr
-        self._dir_offset = dir_offset
-        self._encode_angle_by_sin_cos = encode_angle_by_sin_cos
+        self._input_channels = input_channels
         self._point_cloud_range = point_cloud_range
-        self._anchor_sizes = anchor_sizes
-        self._anchor_rotations = anchor_rotations
-        self._iou_thresholds = iou_thresholds
+        self._voxel_size = voxel_size   # x, y, z
+        self._num_dir_bins = num_dir_bins
+        self._anchor_generation_config = anchor_generation_config
+        self._num_classes = len(self._anchor_generation_config)
 
-        if len(self._iou_thresholds) != num_classes:
-            assert len(self._iou_thresholds) == 1
-            self._iou_thresholds = self._iou_thresholds * num_classes
-        assert len(self._iou_thresholds) == num_classes
-
-        # 创建anchor生成器
-        self._anchor_generator = Anchor3DRangeGenerator(
-            point_cloud_ranges=point_cloud_range,
-            anchor_sizes=anchor_sizes,
-            anchor_rotations=anchor_rotations
-        )
-        # 生成 anchors
-        self._anchors = self._anchor_generator.generate_anchors()
-        self._num_anchors_per_location = self._anchor_generator.num_anchors_per_location
+        # 生成网格（特征图）尺寸信息
+        nx = (self._point_cloud_range[3] - self._point_cloud_range[0]) / self._voxel_size[0]
+        ny = (self._point_cloud_range[4] - self._point_cloud_range[1]) / self._voxel_size[1]
+        assert abs(float(int(nx)) - nx) <= 1e-5
+        assert abs(float(int(ny)) - ny) <= 1e-5
+        self._grid_size = torch.tensor([nx, ny])
 
         # 创建三维矩形框编码器
-        self._bbox_coder = ResidualCoder(encode_angle_by_sin_cos=self._encode_angle_by_sin_cos)
+        self._bbox_coder = ResidualCoder(encode_angle_by_sin_cos=True)
         self._box_code_size = self._bbox_coder.box_code_size
+
+        # 创建anchor生成器并生成anchors
+        self._anchor_generator = Anchor3DRangeGenerator(
+            point_cloud_range=self._point_cloud_range,
+            anchor_generation_config=self._anchor_generation_config
+        )
+        anchors, self._num_anchors_per_location = self.generate_anchors(anchor_ndim=self._box_code_size)
+        self._anchors = [x.cuda() for x in anchors]
+
+        # 累加所有类别的所有anchors数量
+        self._num_anchors_per_location = sum(self._num_anchors_per_location)
 
         # 构造神经网络预测头
         self._conv_cls = nn.Conv2d(
-            in_channels=self._feat_channels,
+            in_channels=self._input_channels,
             out_channels=self._num_anchors_per_location * self._num_classes,
             kernel_size=(1, 1))
 
         self._conv_box = nn.Conv2d(
-            in_channels=self._feat_channels,
+            in_channels=self._input_channels,
             out_channels=self._num_anchors_per_location * self._box_code_size,
             kernel_size=(1, 1))
 
         self._conv_dir_cls = nn.Conv2d(
-            in_channels=self._feat_channels,
-            out_channels=self._num_anchors_per_location * len(self._anchor_rotations),
+            in_channels=self._input_channels,
+            out_channels=self._num_anchors_per_location * self._num_dir_bins,
             kernel_size=(1, 1))
 
         self.init_weights()
 
-    @property
-    def anchors(self):
-        return self._anchors
+    def generate_anchors(self, anchor_ndim=7):
+        """
+        生成anchors
 
-
-    @staticmethod
-    def generate_anchors(anchor_generator_cfg, grid_size, point_cloud_range, anchor_ndim=7):
-        anchor_generator = AnchorGenerator(
-            anchor_range=point_cloud_range,
-            anchor_generator_config=anchor_generator_cfg
-        )
-        feature_map_size = [grid_size[:2] // config['feature_map_stride'] for config in anchor_generator_cfg]
-        anchors_list, num_anchors_per_location_list = anchor_generator.generate_anchors(feature_map_size)
+        :param anchor_ndim: 每一个anchor的编码维度
+        :return:
+        """
+        feature_map_size = [self._grid_size[:2] // config['feature_map_stride'] for config in self._anchor_generation_config]
+        anchors_list, num_anchors_per_location_list = self._anchor_generator.generate_anchors(feature_map_size)
 
         if anchor_ndim != 7:
             for idx, anchors in enumerate(anchors_list):
+                # 在末尾的维度上padding零
                 pad_zeros = anchors.new_zeros([*anchors.shape[0:-1], anchor_ndim - 7])
                 new_anchors = torch.cat((anchors, pad_zeros), dim=-1)
                 anchors_list[idx] = new_anchors
@@ -176,27 +176,45 @@ class PointPillarAnchorHeadSingle(nn.Module):
 if __name__ == "__main__":
     # 参考 https://github.com/open-mmlab/OpenPCDet/blob/master/tools/cfgs/kitti_models/pointpillar.yaml
     dense_head = PointPillarAnchorHeadSingle(
-        num_classes=3,
-        feat_channels=384,
-        nms_pre=100,
-        score_thr=0.1,
-        dir_offset=0,
-        point_cloud_ranges=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
-        anchor_rotations=[[0, 1.5707963], [0, 1.5707963], [0, 1.5707963]],
-        anchor_sizes=[
-            [3.9, 1.6, 1.56],  # Car 类别的anchor尺寸, dx, dy, dz
-            [0.8, 0.6, 1.73],  # Pedestrian 类别的anchor尺寸, dx, dy, dz
-            [1.76, 0.6, 1.73]  # Cyclist 类别的anchor尺寸, dx, dy, dz
-        ],
-        anchor_bottom_heights=[
-            [-1.78],  # Car 类别的 z_offset
-            [-0.6],  # Pedestrian 类别的 z_offset
-            [-0.6]  # Cyclist 类别的 z_offset
-        ],
-        align_center=True
+        input_channels=384,
+        point_cloud_range=[0, -39.68, -3.0, 69.12, 39.68, 1.0],
+        voxel_size=[0.16, 0.16, 4.0],
+        num_dir_bins=2,
+        anchor_generation_config=[
+            {
+                'class_name': 'Car',
+                'anchor_sizes': [[3.9, 1.6, 1.56]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-1.78],
+                'align_center': False,
+                'feature_map_stride': 2,
+                'matched_threshold': 0.6,
+                'unmatched_threshold': 0.45
+            },
+            {
+                'class_name': 'Pedestrian',
+                'anchor_sizes': [[0.8, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 2,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            },
+            {
+                'class_name': 'Cyclist',
+                'anchor_sizes': [[1.76, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 2,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            }
+        ]
     )
 
     print(dense_head)
-
-    dense_head(torch.rand((4, 384, 216, 248)))
+    #
+    # dense_head(torch.rand((4, 384, 216, 248)))
 

@@ -2,7 +2,7 @@ import torch
 
 
 class ResidualCoder(object):
-    def __init__(self, code_size=7, encode_angle_by_sin_cos=False):
+    def __init__(self, code_size=7, encode_angle_by_sin_cos=True):
         """
         构建函数
 
