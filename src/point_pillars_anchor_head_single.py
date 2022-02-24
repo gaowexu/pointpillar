@@ -14,7 +14,8 @@ class PointPillarAnchorHeadSingle(nn.Module):
                  num_dir_bins,
                  dir_offset,
                  dir_limit_offset,
-                 anchor_generation_config
+                 anchor_generation_config,
+                 use_multi_head=False
                  ):
         """
 
@@ -25,6 +26,7 @@ class PointPillarAnchorHeadSingle(nn.Module):
         :param dir_offset:
         :param dir_limit_offset:
         :param anchor_generation_config:
+        :param use_multi_head:
         """
         super().__init__()
         self._input_channels = input_channels
@@ -35,6 +37,7 @@ class PointPillarAnchorHeadSingle(nn.Module):
         self._dir_limit_offset = dir_limit_offset
         self._anchor_generation_config = anchor_generation_config
         self._num_classes = len(self._anchor_generation_config)
+        self._use_multi_head = use_multi_head
 
         # 生成网格（特征图）尺寸信息
         nx = (self._point_cloud_range[3] - self._point_cloud_range[0]) / self._voxel_size[0]
@@ -107,61 +110,73 @@ class PointPillarAnchorHeadSingle(nn.Module):
 
     def generate_predicted_boxes(self, batch_size, cls_preds, box_preds, dir_cls_preds):
         """
-        Args:
-            batch_size:
-            cls_preds: (N, H, W, C1)
-            box_preds: (N, H, W, C2)
-            dir_cls_preds: (N, H, W, C3)
+        根据预测的residuals生成最终的 bounding boxes
 
-        Returns:
-            batch_cls_preds: (B, num_boxes, num_classes)
-            batch_box_preds: (B, num_boxes, 7+C)
-
+        :param batch_size: batch 尺度
+        :param cls_preds: 推理得到的 类别预测tensor, 形状为 [4, 216, 248, 18]
+        :param box_preds: 推理得到的 box预测tensor, 形状为 [4, 216, 248, 48]
+        :param dir_cls_preds: 推理得到的 方向角预测tensor, 形状为 [4, 216, 248, 12]
+        :return:
+            batch_cls_preds: (batch_size, num_boxes, num_classes)
+            batch_box_preds: (batch_size, num_boxes, 7)
         """
-
-        for it in self._anchors:
-            print(it.shape)
-
-        self._use_multihead = False
         if isinstance(self._anchors, list):
-            if self._use_multihead:
-                anchors = torch.cat([anchor.permute(3, 4, 0, 1, 2, 5).contiguous().view(-1, anchor.shape[-1])
-                                     for anchor in self._anchors], dim=0)
+            if self._use_multi_head:
+                anchors = torch.cat(
+                    [anchor.permute(3, 4, 0, 1, 2, 5).contiguous().view(-1, anchor.shape[-1]) for
+                     anchor in self._anchors], dim=0)
             else:
                 anchors = torch.cat(self._anchors, dim=-3)
         else:
             anchors = self._anchors
 
-        print("anchors.shape = {}".format(anchors.shape))
-
+        # 至此，anchors.shape的形状为 [1, 248, 216, 3, 2, 8]
+        # num_anchors = 248 * 216 * 3 * 2 = 321408
         num_anchors = anchors.view(-1, anchors.shape[-1]).shape[0]
-        batch_anchors = anchors.view(1, -1, anchors.shape[-1]).repeat(batch_size, 1, 1)
-        batch_cls_preds = cls_preds.view(batch_size, num_anchors, -1).float() if not isinstance(cls_preds, list) else cls_preds
-        batch_box_preds = box_preds.view(batch_size, num_anchors, -1) if not isinstance(box_preds, list) else torch.cat(box_preds, dim=1).view(batch_size, num_anchors, -1)
 
-        print("batch_anchors.shape = {}".format(batch_anchors.shape))
-        print("batch_box_preds.shape = {}".format(batch_box_preds.shape))
+        # batch_anchors形状为 [4, 321408, 8]
+        batch_anchors = anchors.view(1, -1, anchors.shape[-1]).repeat(batch_size, 1, 1)
+
+        # cls_preds 形状为 [4, 216, 248, 18]
+        # batch_cls_preds 形状为 [4, 321408, 3], 321408 = 216 * 248 * 6
+        batch_cls_preds = cls_preds.view(
+            batch_size, num_anchors, -1).float() if not isinstance(cls_preds, list) else cls_preds
+
+        # box_preds 形状为 [4, 216, 248, 48]
+        # batch_box_preds 形状为 [4, 321408, 8], 321408 = 216 * 248 * 6
+        batch_box_preds = box_preds.view(
+            batch_size, num_anchors, -1) if not isinstance(box_preds, list) \
+            else torch.cat(box_preds, dim=1).view(batch_size, num_anchors, -1)
+
+        # batch_box_preds解码后的形状为 [4, 321408, 7]
         batch_box_preds = self._bbox_coder.decode(anchors=batch_anchors, deltas=batch_box_preds)
 
+        # dir_offset 为 0.78539，也即45度角
         dir_offset = self._dir_offset
         dir_limit_offset = self._dir_limit_offset
+
+        # dir_cls_preds 形状为 [4, 216, 248, 12]
+        # 执行下一行后 dir_cls_preds 形状为 [4, 321408, 2]
         dir_cls_preds = dir_cls_preds.view(batch_size, num_anchors, -1) if not isinstance(dir_cls_preds, list) \
             else torch.cat(dir_cls_preds, dim=1).view(batch_size, num_anchors, -1)
         dir_labels = torch.max(dir_cls_preds, dim=-1)[1]
 
+        # period = 3.141592653589793
         period = (2 * np.pi / self._num_dir_bins)
-        dir_rot = limit_period(
-            batch_box_preds[..., 6] - dir_offset, dir_limit_offset, period
-        )
+
+        # dir_rot.shape = torch.Size([4, 321408])
+        dir_rot = limit_period(batch_box_preds[..., 6] - dir_offset, dir_limit_offset, period)
+
+        #
         batch_box_preds[..., 6] = dir_rot + dir_offset + period * dir_labels.to(batch_box_preds.dtype)
 
-        print("batch_cls_preds.shape = {}".format(batch_cls_preds.shape))
-        print("batch_box_preds.shape = {}".format(batch_box_preds.shape))
+        # batch_cls_preds.shape = torch.Size([4, 321408, 3])
+        # batch_box_preds.shape = torch.Size([4, 321408, 7])
         return batch_cls_preds, batch_box_preds
 
     def forward(self, x):
         """
-         前向推理函数
+        前向推理函数
 
         :param x: torch.Tensor, 维度为 (batch_size, 6C, nx/2, ny/2), PillarPoint中 C = 64， nx = 432, ny = 496
         :return:
